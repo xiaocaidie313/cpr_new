@@ -1,0 +1,31 @@
+package com.example.cpr_new.core.contract
+
+import kotlinx.coroutines.flow.Flow
+
+/**
+ * 决策 Agent 接口（由第 2 部分 Edge Gemma 实现，第 4 部分消费）。
+ *
+ * 第 4 部分把感知事件流交给 Agent，Agent 返回指导动作流；
+ * 会话结束时再把累积日志交给 Agent 生成交接报告。
+ *
+ * 可扩展性：
+ * - 真实实现（端侧 Gemma 推理）与 Mock 实现都满足此接口；
+ * - 入参/出参均为 [Flow]，天然支持流式、可取消、可背压。
+ */
+interface GuidanceAgent {
+
+    /** 会话开始时的首条指导（如“确认环境安全，轻拍呼叫患者”）。 */
+    suspend fun onSessionStart(): GuidanceAction
+
+    /**
+     * 将感知事件流转换为指导动作流。
+     * 实现方内部维护对话状态机；第 4 部分只负责呈现产出的动作。
+     */
+    fun guidance(perception: Flow<PerceptionEvent>): Flow<GuidanceAction>
+
+    /** 基于完整会话日志生成交接报告。 */
+    suspend fun buildHandover(log: SessionLog): HandoverReport
+
+    /** Agent 是否就绪（模型加载完成）。用于“模型加载慢”的 UI 兜底。 */
+    val isReady: Boolean
+}

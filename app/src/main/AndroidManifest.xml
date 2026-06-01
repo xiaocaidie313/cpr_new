@@ -2,6 +2,22 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- ============ 第 4 部分：硬件适配所需权限 ============ -->
+    <!-- 摄像头：用于第 3 部分的 CPR 姿态/手位感知（第 4 部分只负责接入与取流） -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- 麦克风：用于节奏检测辅助 + 现场录音留证 -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- 定位：用于把现场坐标提供给 120 / Handover 报告 -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- 震动：节拍器触觉反馈 -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- 声明硬件为可选，避免无摄像头设备无法安装；运行时再做能力检测兜底 -->
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <uses-feature android:name="android.hardware.location" android:required="false" />
+
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"

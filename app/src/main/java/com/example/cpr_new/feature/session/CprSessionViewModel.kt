@@ -1,0 +1,299 @@
+package com.example.cpr_new.feature.session
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
+import com.example.cpr_new.core.contract.CprPhase
+import com.example.cpr_new.core.contract.GuidanceAction
+import com.example.cpr_new.core.contract.GuidancePriority
+import com.example.cpr_new.core.contract.HandoverReport
+import com.example.cpr_new.core.contract.LogEntryType
+import com.example.cpr_new.core.contract.PerceptionEvent
+import com.example.cpr_new.core.contract.SessionLog
+import com.example.cpr_new.core.contract.SessionLogEntry
+import com.example.cpr_new.core.di.CprDependencies
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import java.util.UUID
+
+/**
+ * 急救会话编排 ViewModel —— 第 4 部分的“总线”。
+ *
+ * 它把各模块串成一条数据流（对应分工表“流程集成”）：
+ *
+ *   感知源(第3部分) ──events──▶ [feedPerception] ──▶ Agent(第2部分)
+ *                                     │                    │
+ *                                     ▼                    ▼
+ *                              更新质量分/UI        guidance 动作流
+ *                                                          │
+ *                          ┌───────────────────────────────┤
+ *                          ▼            ▼           ▼       ▼
+ *                        TTS播报     触觉反馈     节拍变速   阶段切换
+ *
+ * 同时负责：录音留证、定位采集、120 拨号、异常兜底、生成 Handover。
+ * 它不做任何医学判断 —— 那是 Agent 的职责。
+ */
+class CprSessionViewModel(
+    private val deps: CprDependencies,
+) : ViewModel() {
+
+    private val _state = MutableStateFlow(CprSessionState())
+    val state: StateFlow<CprSessionState> = _state.asStateFlow()
+
+    // 节拍器挂在 viewModelScope，随 ViewModel 销毁自动取消。
+    private val metronome = Metronome(viewModelScope)
+
+    // 感知事件中转流：本地订阅一份更新 UI，同时转交 Agent。
+    private val perceptionRelay = MutableSharedFlow<PerceptionEvent>(extraBufferCapacity = 16)
+
+    // 会话日志累积（内存态，结束时打包成不可变 SessionLog）。
+    private val logEntries = mutableListOf<SessionLogEntry>()
+    private var sessionId: String = ""
+    private var startedAtMs: Long = 0L
+    private val rateSamples = mutableListOf<Float>()
+
+    init {
+        observeMetronome()
+    }
+
+    // region 生命周期：开始 / 结束会话 ---------------------------------------
+
+    /** 开始一次急救会话：拉起感知、Agent、节拍器、录音、定位。 */
+    fun startSession() {
+        if (_state.value.isActive) return
+        sessionId = UUID.randomUUID().toString()
+        startedAtMs = System.currentTimeMillis()
+        logEntries.clear()
+        rateSamples.clear()
+
+        _state.value = CprSessionState(
+            isActive = true,
+            phase = CprPhase.ASSESS,
+            perceptionReady = deps.perceptionSource.isReady,
+            agentReady = deps.agent.isReady,
+        )
+        log(LogEntryType.LIFECYCLE, "会话开始")
+
+        startPerception()
+        startGuidance()
+        startMetronome()
+        startRecordingSafely()
+        captureLocation()
+        emitFirstGuidance()
+    }
+
+    /** 结束会话并生成交接报告。 */
+    fun stopSession() {
+        if (!_state.value.isActive) return
+        log(LogEntryType.LIFECYCLE, "会话结束")
+
+        deps.perceptionSource.stop()
+        metronome.stop()
+        deps.tts.stop()
+        deps.haptics.cancel()
+        val recording = runCatching { deps.recorder.stop() }.getOrNull()
+        if (recording != null) log(LogEntryType.USER_ACTION, "已保存录音：${recording.name}")
+
+        _state.value = _state.value.copy(isActive = false, metronomeRunning = false)
+        buildHandover()
+    }
+
+    // endregion
+
+    // region 数据流串联 -------------------------------------------------------
+
+    private fun startPerception() {
+        deps.perceptionSource.start()
+        viewModelScope.launch {
+            runCatching {
+                deps.perceptionSource.events.collect { event -> onPerception(event) }
+            }.onFailure { raiseIncident("感知数据中断，请检查摄像头/光线") }
+        }
+    }
+
+    /** 处理单条感知事件：更新质量分、记录样本、转交 Agent。 */
+    private suspend fun onPerception(event: PerceptionEvent) {
+        val score = if (event.isReliable()) QualityScorer.score(event) else _state.value.qualityScore
+        event.compressionRate?.let { rateSamples.add(it) }
+
+        _state.value = _state.value.copy(
+            latestPerception = event,
+            qualityScore = score,
+            perceptionReady = true,
+            // 识别置信度过低时给出兜底提示，但不打断流程。
+            incidentBanner = if (!event.isReliable()) "识别置信度较低，请调整手机角度" else _state.value.incidentBanner,
+        )
+        // 低置信度的事件不污染 Agent 决策。
+        if (event.isReliable()) perceptionRelay.emit(event)
+    }
+
+    private fun startGuidance() {
+        viewModelScope.launch {
+            runCatching {
+                deps.agent.guidance(perceptionRelay).collect { action -> applyGuidance(action) }
+            }.onFailure { raiseIncident("指导引擎异常，已切换到基础节拍模式") }
+        }
+    }
+
+    /** 应用一条 Agent 指导动作：播报 + 触觉 + 节拍变速 + 阶段切换 + 记录。 */
+    private fun applyGuidance(action: GuidanceAction) {
+        // CRITICAL 打断当前播报，其余排队。
+        deps.tts.speak(action.spokenText, interrupt = action.priority == GuidancePriority.CRITICAL)
+        action.haptic?.let { deps.haptics.play(it) }
+        action.targetRate?.let { metronome.setBpm(it) }
+
+        _state.value = _state.value.copy(
+            latestGuidance = action,
+            phase = action.phase,
+            agentReady = true,
+        )
+        log(LogEntryType.GUIDANCE, action.displayText, mapOf("phase" to action.phase.name))
+    }
+
+    private fun emitFirstGuidance() {
+        viewModelScope.launch {
+            runCatching { applyGuidance(deps.agent.onSessionStart()) }
+                .onFailure { raiseIncident("指导引擎加载较慢，请稍候…") }
+        }
+    }
+
+    // endregion
+
+    // region 节拍器 -----------------------------------------------------------
+
+    private fun startMetronome() = metronome.start()
+
+    private fun observeMetronome() {
+        viewModelScope.launch {
+            metronome.bpm.collect { bpm -> _state.value = _state.value.copy(metronomeBpm = bpm) }
+        }
+        viewModelScope.launch {
+            metronome.running.collect { running ->
+                _state.value = _state.value.copy(metronomeRunning = running)
+            }
+        }
+        // 每一拍触发一次轻触反馈（仅在会话进行中）。
+        viewModelScope.launch {
+            metronome.ticks.collect {
+                if (_state.value.isActive) deps.haptics.play(com.example.cpr_new.core.contract.HapticPattern.TICK)
+            }
+        }
+    }
+
+    // endregion
+
+    // region 硬件动作 / 流程集成 ----------------------------------------------
+
+    /** 拨打 120（实际为打开拨号盘预填号码，安全）。 */
+    fun dialEmergency() {
+        val ok = deps.dialer.dial()
+        log(LogEntryType.USER_ACTION, if (ok) "已唤起 120 拨号" else "唤起拨号失败")
+        if (!ok) raiseIncident("无法唤起拨号，请手动拨打 120")
+    }
+
+    private fun startRecordingSafely() {
+        val file = runCatching { deps.recorder.start() }.getOrNull()
+        if (file == null) log(LogEntryType.INCIDENT, "未录音（无麦克风权限或设备不支持）")
+    }
+
+    private fun captureLocation() {
+        viewModelScope.launch {
+            val geo = runCatching { deps.location.requestSingleFix() }.getOrNull()
+            if (geo != null) {
+                log(
+                    LogEntryType.USER_ACTION,
+                    "已获取定位",
+                    mapOf("lat" to geo.latitude.toString(), "lng" to geo.longitude.toString()),
+                )
+            } else {
+                log(LogEntryType.INCIDENT, "定位不可用（无权限或无信号）")
+            }
+        }
+    }
+
+    // endregion
+
+    // region 异常兜底 / 报告 --------------------------------------------------
+
+    /** 抛出一条用户可见的兜底提示并记录。 */
+    fun raiseIncident(message: String) {
+        _state.value = _state.value.copy(incidentBanner = message)
+        log(LogEntryType.INCIDENT, message)
+    }
+
+    /** 清除当前兜底提示横幅。 */
+    fun dismissIncident() {
+        _state.value = _state.value.copy(incidentBanner = null)
+    }
+
+    /** 关闭交接报告弹窗（回到待命态）。 */
+    fun dismissReport() {
+        _state.value = _state.value.copy(handoverReport = null)
+    }
+
+    private fun buildHandover() {
+        viewModelScope.launch {
+            val log = snapshotLog()
+            val report: HandoverReport? = runCatching { deps.agent.buildHandover(log) }.getOrNull()
+            if (report != null) {
+                _state.value = _state.value.copy(handoverReport = report)
+            } else {
+                raiseIncident("交接报告生成失败，可凭录音/日志人工交接")
+            }
+        }
+    }
+
+    /** 把内存日志打包成不可变快照，附带聚合指标。 */
+    private fun snapshotLog(): SessionLog {
+        val avgRate = if (rateSamples.isEmpty()) 0f else rateSamples.average().toFloat()
+        return SessionLog(
+            sessionId = sessionId,
+            startedAtMs = startedAtMs,
+            endedAtMs = System.currentTimeMillis(),
+            entries = logEntries.toList(),
+            metrics = mapOf(
+                "avgCompressionRate" to avgRate,
+                "finalQualityScore" to _state.value.qualityScore.toFloat(),
+            ),
+        )
+    }
+
+    private fun log(type: LogEntryType, summary: String, payload: Map<String, String> = emptyMap()) {
+        logEntries.add(
+            SessionLogEntry(
+                timestampMs = System.currentTimeMillis(),
+                type = type,
+                summary = summary,
+                payload = payload,
+            ),
+        )
+    }
+
+    // endregion
+
+    override fun onCleared() {
+        super.onCleared()
+        // 兜底释放硬件资源，防止泄漏。
+        runCatching { deps.perceptionSource.stop() }
+        metronome.stop()
+        deps.tts.release()
+        deps.recorder.release()
+        deps.haptics.cancel()
+    }
+
+    /**
+     * ViewModel 工厂：把依赖注入进来。
+     * UI 侧用 `viewModel(factory = CprSessionViewModel.factory(deps))` 获取实例。
+     */
+    companion object {
+        fun factory(deps: CprDependencies): ViewModelProvider.Factory =
+            object : ViewModelProvider.Factory {
+                @Suppress("UNCHECKED_CAST")
+                override fun <T : ViewModel> create(modelClass: Class<T>): T =
+                    CprSessionViewModel(deps) as T
+            }
+    }
+}
