@@ -41,9 +41,16 @@ interface FrameSink {
 }
 
 data class FrameMeta(
+    /** 帧宽（像素）。width × height 即分辨率 resolution，不单设字段避免不一致。 */
     val width: Int,
+    /** 帧高（像素）。 */
     val height: Int,
+    /** 画面旋转角（0/90/180/270）。由算法侧据此旋正，Android 不预旋转。 */
     val rotationDegrees: Int,
-    val format: String,// 格式
+    /** 像素格式，取值见 [CameraInputSpec]（默认 YUV_420_888）。 */
+    val format: String,
+    /** 帧时间戳（毫秒，单调时钟，见 [CameraInputSpec.TIMESTAMP_CLOCK]）。 */
     val timestampMs: Long,
+    /** 所属会话 id，与 [PerceptionEvent.sessionId] 对齐。 */
+    val sessionId: String,
 )

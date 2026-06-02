@@ -14,8 +14,11 @@ import kotlinx.coroutines.flow.Flow
  */
 interface GuidanceAgent {
 
-    /** 会话开始时的首条指导（如“确认环境安全，轻拍呼叫患者”）。 */
-    suspend fun onSessionStart(): GuidanceAction
+    /**
+     * 会话开始时的首条指导（如“确认环境安全，轻拍呼叫患者”）。
+     * @param sessionId 本次会话 id，由 Android 下发，便于 Agent 内部按会话维护状态。
+     */
+    suspend fun onSessionStart(sessionId: String): GuidanceAction
 
     /**
      * 将感知事件流转换为指导动作流。

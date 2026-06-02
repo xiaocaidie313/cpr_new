@@ -86,6 +86,7 @@ app/src/main/java/com/example/cpr_new/
 | [04-session-orchestration.md](04-session-orchestration.md) | 会话编排状态机、节拍器、质量分 |
 | [05-ui.md](05-ui.md) | 急救 UI 设计与组件 |
 | [06-exception-handling.md](06-exception-handling.md) | 异常兜底清单（演示高风险点） |
+| [07-接口对接约定.md](07-接口对接约定.md) | 摄像头输入规格 + 联调传输方式（对外确认稿） |
 
 ---
 

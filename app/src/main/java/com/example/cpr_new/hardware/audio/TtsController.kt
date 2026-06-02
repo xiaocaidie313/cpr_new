@@ -9,7 +9,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * 文本转语音（TTS）控制器 —— 硬件适配层。
  *
- * 职责：把 Agent 的 [com.example.cpr_new.core.contract.GuidanceAction.spokenText] 念出来。
+ * 职责：把 Agent 的 [com.example.cpr_new.core.contract.GuidanceAction.ttsText] 念出来。
  * 设计要点：
  * - 懒初始化 + 就绪标志，避免引擎未就绪时丢播报；
  * - CRITICAL 级别可打断当前播报（QUEUE_FLUSH），普通提示排队（QUEUE_ADD）；

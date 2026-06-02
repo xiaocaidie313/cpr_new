@@ -1,0 +1,173 @@
+package com.example.cpr_new.hardware.camera
+
+import android.os.SystemClock
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageProxy
+import androidx.camera.core.Preview
+import androidx.camera.core.UseCase
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.example.cpr_new.core.contract.CameraInputSpec
+import com.example.cpr_new.core.contract.FrameMeta
+import com.example.cpr_new.core.contract.FrameSink
+import java.util.concurrent.Executors
+
+/**
+ * 摄像头预览组件 —— 硬件适配层（CameraX）。
+ *
+ * 职责（第 4 部分边界内）：
+ * 1. 打开摄像头并在界面显示实时预览（[Preview] 用例）；
+ * 2. 可选地把每帧通过 [ImageAnalysis] 转交给 [frameSink]（第 3 部分识别模型）。
+ *
+ * 不做任何图像理解——那是第 3 部分的职责。本组件只负责“取流 + 递帧 + 预览”。
+ *
+ * 设计要点：
+ * - 无状态、自管生命周期：绑定到 [LocalLifecycleOwner]，离开界面自动解绑、释放相机；
+ * - [enabled] 作为 key：权限授予后翻转为 true，会自动重新绑定相机；
+ * - 仅当 [frameSink] 非空时才启用帧分析，避免 Mock 模式下做无谓的像素拷贝；
+ * - 全程容错：相机不可用 / 绑定失败时不崩溃，显示占位。
+ */
+@Composable
+fun CameraPreview(
+    enabled: Boolean,
+    sessionId: String,
+    frameSink: FrameSink?,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    if (!enabled) {
+        CameraPlaceholder(text = "摄像头未开启（需授予相机权限）", modifier = modifier)
+        return
+    }
+
+    val previewView = remember {
+        PreviewView(context).apply { scaleType = PreviewView.ScaleType.FILL_CENTER }
+    }
+    val cameraProviderFuture = remember { ProcessCameraProvider.getInstance(context) }
+    val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
+    val mainExecutor = remember { ContextCompat.getMainExecutor(context) }
+
+    // enabled / sessionId 变化时重新绑定；离开时解绑并关闭分析线程。
+    DisposableEffect(enabled, sessionId, frameSink) {
+        cameraProviderFuture.addListener({
+            runCatching {
+                val provider = cameraProviderFuture.get()
+                bindUseCases(provider, lifecycleOwner, previewView, frameSink, analysisExecutor, sessionId)
+            }
+        }, mainExecutor)
+
+        onDispose {
+            runCatching { cameraProviderFuture.get().unbindAll() }
+        }
+    }
+
+    AndroidView(factory = { previewView }, modifier = modifier)
+}
+
+/** 占位视图：无权限 / 相机不可用时展示，避免黑屏与误解。 */
+@Composable
+private fun CameraPlaceholder(text: String, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier.background(Color(0xFF101216)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(text = text, color = Color(0xFF8A9099), fontSize = 13.sp)
+    }
+}
+
+/** 绑定预览（始终）+ 帧分析（仅当有 sink）。 */
+private fun bindUseCases(
+    provider: ProcessCameraProvider,
+    lifecycleOwner: androidx.lifecycle.LifecycleOwner,
+    previewView: PreviewView,
+    frameSink: FrameSink?,
+    analysisExecutor: java.util.concurrent.Executor,
+    sessionId: String,
+) {
+    val preview = Preview.Builder().build().also {
+        it.surfaceProvider = previewView.surfaceProvider
+    }
+
+    val useCases = mutableListOf<UseCase>(preview)
+
+    if (frameSink != null) {
+        val analysis = ImageAnalysis.Builder()
+            // 推理慢时丢旧帧而非堆积，保证实时性（对应 CameraInputSpec.keepOnlyLatest）。
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .build()
+        analysis.setAnalyzer(analysisExecutor) { proxy ->
+            forwardFrame(proxy, sessionId, frameSink)
+        }
+        useCases.add(analysis)
+    }
+
+    provider.unbindAll()
+    runCatching {
+        provider.bindToLifecycle(
+            lifecycleOwner,
+            CameraSelector.DEFAULT_BACK_CAMERA,
+            *useCases.toTypedArray(),
+        )
+    }
+}
+
+/**
+ * 把一帧转成字节并交给第 3 部分。务必 close 以释放缓冲。
+ *
+ * 注意：这里用常见的 YUV_420_888 -> NV21 朴素打包（未逐行处理 rowStride），
+ * 多数设备可用；正式联调时若第 3 部分发现色度错位，再按 stride 精化。
+ * 像素格式通过 [FrameMeta.format] 明确告知接收方。
+ */
+private fun forwardFrame(proxy: ImageProxy, sessionId: String, sink: FrameSink) {
+    runCatching {
+        val nv21 = proxy.toNv21()
+        sink.onFrame(
+            frame = nv21,
+            meta = FrameMeta(
+                width = proxy.width,
+                height = proxy.height,
+                rotationDegrees = proxy.imageInfo.rotationDegrees,
+                format = CameraInputSpec.PIXEL_FORMAT_NV21,
+                timestampMs = SystemClock.elapsedRealtime(),
+                sessionId = sessionId,
+            ),
+        )
+    }
+    proxy.close()
+}
+
+/** YUV_420_888 -> NV21 朴素打包。 */
+private fun ImageProxy.toNv21(): ByteArray {
+    val yBuffer = planes[0].buffer
+    val uBuffer = planes[1].buffer
+    val vBuffer = planes[2].buffer
+
+    val ySize = yBuffer.remaining()
+    val uSize = uBuffer.remaining()
+    val vSize = vBuffer.remaining()
+
+    val nv21 = ByteArray(ySize + uSize + vSize)
+    yBuffer.get(nv21, 0, ySize)
+    // NV21 顺序为 Y + V + U
+    vBuffer.get(nv21, ySize, vSize)
+    uBuffer.get(nv21, ySize + vSize, uSize)
+    return nv21
+}

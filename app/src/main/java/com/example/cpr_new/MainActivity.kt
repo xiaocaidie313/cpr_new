@@ -67,5 +67,8 @@ private fun CprApp(modifier: Modifier = Modifier) {
         onDismissIncident = viewModel::dismissIncident,
         onDismissReport = viewModel::dismissReport,
         modifier = modifier,
+        // 相机权限授予后翻转，CameraPreview 会自动绑定并显示预览。
+        cameraGranted = permissions.snapshot.isGranted(CprPermissions.CAMERA),
+        frameSink = viewModel.frameSink,
     )
 }

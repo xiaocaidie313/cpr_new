@@ -50,12 +50,22 @@
 
 ---
 
-## 摄像头说明
+## CameraPreview（摄像头 · 已实现）
 
-按职责，摄像头“接入与取流”属于第 4 部分，但**画面理解算法属于第 3 部分**。
-为保持离线可构建、不强绑 CameraX 版本，当前把取流作为**扩展点**：
+位于 `hardware/camera/CameraPreview.kt`，基于 **CameraX**（`camera-core/camera2/lifecycle/view`）。
 
-- 默认：感知源（含 Mock）自管采集，Android 仅申请 CAMERA 权限。
-- 可选：Android 用 CameraX 取流并通过 `FrameSink` 把帧推给算法（见契约文档 A 节）。
-  接入 CameraX 时在 `build.gradle.kts` 增加 `androidx.camera:camera-*` 依赖即可，
-  不影响现有架构。
+按职责，摄像头“接入与取流”属于第 4 部分，**画面理解算法属于第 3 部分**。本组件只做三件事：
+
+1. **打开摄像头 + 实时预览**（`Preview` 用例 + `PreviewView`）——这是真实相机画面，不再是占位。
+2. **可选帧分析**（`ImageAnalysis`）：仅当感知源实现了 `FrameSink` 时，才把每帧（YUV→NV21）
+   连同 `FrameMeta`（含 sessionId / rotation / timestamp）推给第 3 部分。
+3. **自管生命周期**：绑定到 `LocalLifecycleOwner`，离开界面自动解绑释放；`enabled`（相机权限）
+   翻转后自动重新绑定。
+
+设计要点：
+- Mock 模式下 `frameSink` 为 null，**只预览不分析**，省去无谓的像素拷贝。
+- 无权限 / 相机不可用时显示占位文案，不崩溃、不黑屏。
+- 帧率/分辨率/格式的推荐值见 `CameraInputSpec`；NV21 为朴素打包，正式联调按 stride 精化。
+
+接线：`MainActivity` 传入 `cameraGranted` 与 `viewModel.frameSink` → `CprGuidanceScreen`
+→ 进行态 `ActiveContent` 顶部渲染 `CameraPreview`。

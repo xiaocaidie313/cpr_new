@@ -13,26 +13,39 @@
 
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
-| `timestampMs` | `Long` | 事件时间戳 |
-| `handPosition` | `HandPosition` | 手位：CORRECT/TOO_HIGH/TOO_LOW/OFF_CENTER/UNKNOWN |
-| `compressionRate` | `Float?` | 按压频率（次/分），无法判定填 null |
-| `compressionDepthScore` | `Float?` | 深度充分性 0~1 |
-| `isInterrupted` | `Boolean` | 是否检测到中断 |
-| `confidence` | `Float` | 整体置信度 0~1 |
-| `rawSignals` | `Map<String,Float>` | 可扩展原始信号（关键点等） |
+> 已对齐《CPR 感知模块接口与交接说明 v1》。
 
-> 低于 `MIN_RELIABLE_CONFIDENCE`（默认 0.5）的事件，Android 端会做 UI 兜底，且不喂给 Agent。
+| 字段 | 类型 | v1 对应 | 含义 |
+| --- | --- | --- | --- |
+| `eventId` | `String` | event_id | 事件唯一 id，供 GuidanceAction 回溯 |
+| `sessionId` | `String` | session_id | 会话 id，由 Android 经 `start()` 下发，需回填 |
+| `timestampMs` | `Long` | timestamp_ms | 事件时间戳（单调时钟 ms） |
+| `phase` | `CprPhase` | phase | 阶段，MVP 为 COMPRESSION（其 CPR_ACTIVE） |
+| `cameraView` | `CameraView` | camera_view | 机位，默认 SIDE_FRONT |
+| `compressionRateBpm` | `Float?` | compression_rate_bpm | 按压频率（次/分），无法判定填 null |
+| `interruptionMs` | `Long` | interruption_ms | 距上次有效按压间隔；≥1500ms 视为中断 |
+| `handPosition` | `HandPosition` | hand_position | 手位：CENTER/LEFT/RIGHT/HIGH/LOW/UNKNOWN |
+| `armStraight` | `Boolean` | arm_straight | 手臂是否伸直 |
+| `qualityScore` | `Int` | quality_score | **第 3 部分算好的** 0~100 综合分，Android 直接展示 |
+| `confidence` | `Float` | confidence | 整体置信度 0~1 |
+| `rawSignals` | `Map<String,Float>` | — | 可扩展原始信号（关键点 / 各子项分等） |
+
+> - 低于 `MIN_RELIABLE_CONFIDENCE`（默认 0.5）的事件，Android 端会做 UI 兜底，且不喂给 Agent。
+> - 质量评分是第 3 部分职责；Android 的 `QualityScorer` 仅在 `qualityScore<=0` 时兜底估算。
+> - 中断阈值 `PAUSE_THRESHOLD_MS`、频率区间 `TARGET_RATE_MIN/MAX` 见 `PerceptionEvent` 伴生对象。
 
 ### 接口：`CprPerceptionSource`
 
 ```kotlin
 interface CprPerceptionSource {
     val events: Flow<PerceptionEvent>   // 冷流，订阅后开始产出
-    fun start()                         // 幂等
+    fun start(sessionId: String)        // 幂等；sessionId 需回填到每条事件
     fun stop()
     val isReady: Boolean                // 模型是否加载完成
 }
 ```
+
+> 摄像头输入规格（格式/分辨率/帧率/rotation/timestamp）见 [07-接口对接约定.md](07-接口对接约定.md)。
 
 ### 可选：`FrameSink`（由 Android 统一管摄像头时）
 
@@ -45,22 +58,30 @@ interface CprPerceptionSource {
 
 ### 数据模型：`GuidanceAction`
 
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `id` | `String` | 动作唯一标识（用于去抖/日志） |
-| `priority` | `GuidancePriority` | INFO/WARNING/CRITICAL（CRITICAL 打断 TTS） |
-| `phase` | `CprPhase` | 当前阶段，驱动 UI 主视图 |
-| `spokenText` | `String` | TTS 文本（空=不播报） |
-| `displayText` | `String` | 屏幕大字 |
-| `haptic` | `HapticPattern?` | 震动模式 |
-| `targetRate` | `Int?` | 节拍器目标频率 |
-| `metadata` | `Map<String,String>` | 可扩展透传 |
+> 已对齐 v1。字段名与 v1 一一对应。
+
+| 字段 | 类型 | v1 对应 | 含义 |
+| --- | --- | --- | --- |
+| `actionId` | `String` | action_id | 动作唯一标识 |
+| `sessionId` | `String` | session_id | 会话 id |
+| `timestampMs` | `Long` | timestamp_ms | 动作时间戳 |
+| `actionType` | `ActionType` | action_type | VOICE_TEXT/VISUAL_HINT/HAPTIC/COMPOSITE |
+| `priority` | `GuidancePriority` | priority | LOW/MEDIUM/HIGH/CRITICAL（CRITICAL 打断 TTS） |
+| `messageCode` | `MessageCode` | message_code | 稳定消息码，便于去抖/本地化（见下） |
+| `messageText` | `String` | message_text | 屏幕大字 |
+| `ttsText` | `String` | tts_text | TTS 文本（空=不播报） |
+| `hapticPattern` | `HapticPattern?` | haptic_pattern | 震动模式 |
+| `sourceEventId` | `String` | source_event_id | 触发本动作的感知事件 id |
+| `phase` / `targetRate` / `metadata` | — | — | Android 扩展：驱动 UI 阶段 / 节拍器 / 透传 |
+
+> `MessageCode`：GOOD_CONTINUE / MOVE_LEFT / MOVE_RIGHT / MOVE_UP / MOVE_DOWN /
+> STRAIGHTEN_ARMS / SPEED_UP / SLOW_DOWN / RESUME_COMPRESSIONS / TRACKING_LOST。
 
 ### 接口：`GuidanceAgent`
 
 ```kotlin
 interface GuidanceAgent {
-    suspend fun onSessionStart(): GuidanceAction
+    suspend fun onSessionStart(sessionId: String): GuidanceAction
     fun guidance(perception: Flow<PerceptionEvent>): Flow<GuidanceAction>
     suspend fun buildHandover(log: SessionLog): HandoverReport
     val isReady: Boolean

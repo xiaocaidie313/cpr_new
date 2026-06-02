@@ -52,6 +52,11 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
+    // 第 4 部分：CameraX 摄像头取流与预览
+    implementation(libs.androidx.camera.core)
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.androidx.camera.view)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.android)
     androidTestImplementation(platform(libs.androidx.compose.bom))

@@ -39,9 +39,11 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.cpr_new.core.contract.FrameSink
 import com.example.cpr_new.core.contract.GuidancePriority
 import com.example.cpr_new.core.contract.HandoverReport
 import com.example.cpr_new.feature.session.CprSessionState
+import com.example.cpr_new.hardware.camera.CameraPreview
 import com.example.cpr_new.ui.EmergencyPalette
 import com.example.cpr_new.ui.component.GuidanceCard
 import com.example.cpr_new.ui.component.MetronomeIndicator
@@ -64,6 +66,8 @@ fun CprGuidanceScreen(
     onDismissIncident: () -> Unit,
     onDismissReport: () -> Unit,
     modifier: Modifier = Modifier,
+    cameraGranted: Boolean = false,
+    frameSink: FrameSink? = null,
 ) {
     Box(
         modifier = modifier
@@ -83,6 +87,8 @@ fun CprGuidanceScreen(
                 onStop = onStop,
                 onDialEmergency = onDialEmergency,
                 onDismissIncident = onDismissIncident,
+                cameraGranted = cameraGranted,
+                frameSink = frameSink,
             )
         }
 
@@ -235,9 +241,23 @@ private fun ActiveContent(
     onStop: () -> Unit,
     onDialEmergency: () -> Unit,
     onDismissIncident: () -> Unit,
+    cameraGranted: Boolean,
+    frameSink: FrameSink?,
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
         PhaseStepper(phase = state.phase)
+
+        // 实时摄像头预览（取流由第 4 部分负责，识别由第 3 部分负责）。
+        Spacer(Modifier.height(12.dp))
+        CameraPreview(
+            enabled = cameraGranted,
+            sessionId = state.sessionId,
+            frameSink = frameSink,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(180.dp)
+                .clip(RoundedCornerShape(18.dp)),
+        )
 
         if (state.incidentBanner != null) {
             Spacer(Modifier.height(12.dp))
@@ -257,8 +277,8 @@ private fun ActiveContent(
 
         Spacer(Modifier.height(14.dp))
         GuidanceCard(
-            displayText = state.latestGuidance?.displayText.orEmpty(),
-            priority = state.latestGuidance?.priority ?: GuidancePriority.INFO,
+            displayText = state.latestGuidance?.messageText.orEmpty(),
+            priority = state.latestGuidance?.priority ?: GuidancePriority.LOW,
         )
 
         Spacer(Modifier.height(16.dp))

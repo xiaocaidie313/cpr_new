@@ -15,6 +15,8 @@ import com.example.cpr_new.core.contract.PerceptionEvent
 data class CprSessionState(
     /** 会话是否进行中。 */
     val isActive: Boolean = false,
+    /** 当前会话 id（驱动摄像头帧 / 日志对齐）。空串表示未开始。 */
+    val sessionId: String = "",
     /** 当前急救阶段。 */
     val phase: CprPhase = CprPhase.ASSESS,
 
@@ -41,11 +43,11 @@ data class CprSessionState(
 ) {
     /** 频率是否在标准区间内，UI 用于决定仪表盘配色。 */
     val rateInRange: Boolean
-        get() = latestPerception?.compressionRate?.let {
+        get() = latestPerception?.compressionRateBpm?.let {
             it >= PerceptionEvent.TARGET_RATE_MIN && it <= PerceptionEvent.TARGET_RATE_MAX
         } ?: false
 
     /** 手位是否正确（用于 UI 高亮）。 */
     val handPositionOk: Boolean
-        get() = latestPerception?.handPosition == HandPosition.CORRECT
+        get() = latestPerception?.handPosition == HandPosition.CENTER
 }

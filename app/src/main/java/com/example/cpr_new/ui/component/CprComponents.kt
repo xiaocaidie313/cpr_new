@@ -161,7 +161,7 @@ fun GuidanceCard(
         label = "glow",
     )
     val borderColor = if (critical) accent.copy(alpha = glow) else EmergencyPalette.Outline
-    val borderWidth = if (priority == GuidancePriority.INFO) 1.dp else 2.dp
+    val borderWidth = if (priority == GuidancePriority.LOW) 1.dp else 2.dp
 
     Column(
         modifier = modifier
@@ -172,7 +172,7 @@ fun GuidanceCard(
             .padding(horizontal = 20.dp, vertical = 26.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        if (priority != GuidancePriority.INFO) {
+        if (priority != GuidancePriority.LOW) {
             Text(
                 text = if (critical) "立即执行" else "请调整",
                 color = accent,
@@ -327,17 +327,17 @@ fun QualityDashboard(
             MetricTile(
                 modifier = Modifier.weight(1f),
                 label = "频率",
-                value = if (reliable) perception?.compressionRate?.let { "%.0f".format(it) } ?: "--" else "--",
+                value = if (reliable) perception?.compressionRateBpm?.let { "%.0f".format(it) } ?: "--" else "--",
                 unit = "次/分",
                 color = if (reliable && rateInRange) EmergencyPalette.Good else EmergencyPalette.Warn,
                 dimmed = !reliable,
             )
             MetricTile(
                 modifier = Modifier.weight(1f),
-                label = "深度",
-                value = if (reliable) depthLabel(perception?.compressionDepthScore) else "--",
-                unit = "充分度",
-                color = depthColor(perception?.compressionDepthScore, reliable),
+                label = "手臂",
+                value = if (reliable) armLabel(perception?.armStraight) else "--",
+                unit = "姿态",
+                color = armColor(perception?.armStraight, reliable),
                 dimmed = !reliable,
             )
             MetricTile(
@@ -345,7 +345,7 @@ fun QualityDashboard(
                 label = "手位",
                 value = if (reliable) handLabel(perception?.handPosition) else "--",
                 unit = "位置",
-                color = if (reliable && perception?.handPosition == HandPosition.CORRECT)
+                color = if (reliable && perception?.handPosition == HandPosition.CENTER)
                     EmergencyPalette.Good else EmergencyPalette.Warn,
                 dimmed = !reliable,
             )
@@ -429,8 +429,9 @@ private fun MetricTile(
 
 private fun priorityColor(priority: GuidancePriority): Color = when (priority) {
     GuidancePriority.CRITICAL -> EmergencyPalette.Danger
-    GuidancePriority.WARNING -> EmergencyPalette.Warn
-    GuidancePriority.INFO -> EmergencyPalette.Accent
+    GuidancePriority.HIGH -> EmergencyPalette.Danger
+    GuidancePriority.MEDIUM -> EmergencyPalette.Warn
+    GuidancePriority.LOW -> EmergencyPalette.Accent
 }
 
 private fun scoreColor(score: Int): Color = when {
@@ -445,25 +446,24 @@ private fun scoreHint(score: Int): String = when {
     else -> "请加强按压质量"
 }
 
-private fun depthLabel(depth: Float?): String = when {
-    depth == null -> "--"
-    depth >= 0.75f -> "充分"
-    depth >= 0.45f -> "偏浅"
-    else -> "不足"
+private fun armLabel(straight: Boolean?): String = when (straight) {
+    true -> "伸直"
+    false -> "未直"
+    null -> "--"
 }
 
-private fun depthColor(depth: Float?, reliable: Boolean): Color = when {
-    !reliable || depth == null -> EmergencyPalette.OnSurfaceMuted
-    depth >= 0.75f -> EmergencyPalette.Good
-    depth >= 0.45f -> EmergencyPalette.Warn
-    else -> EmergencyPalette.Danger
+private fun armColor(straight: Boolean?, reliable: Boolean): Color = when {
+    !reliable || straight == null -> EmergencyPalette.OnSurfaceMuted
+    straight -> EmergencyPalette.Good
+    else -> EmergencyPalette.Warn
 }
 
 private fun handLabel(position: HandPosition?): String = when (position) {
-    HandPosition.CORRECT -> "正确"
-    HandPosition.TOO_HIGH -> "偏高"
-    HandPosition.TOO_LOW -> "偏低"
-    HandPosition.OFF_CENTER -> "偏移"
+    HandPosition.CENTER -> "正确"
+    HandPosition.LEFT -> "偏左"
+    HandPosition.RIGHT -> "偏右"
+    HandPosition.HIGH -> "偏高"
+    HandPosition.LOW -> "偏低"
     HandPosition.UNKNOWN, null -> "--"
 }
 

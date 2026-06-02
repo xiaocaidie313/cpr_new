@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.cpr_new.core.contract.CprPhase
+import com.example.cpr_new.core.contract.FrameSink
 import com.example.cpr_new.core.contract.GuidanceAction
 import com.example.cpr_new.core.contract.GuidancePriority
 import com.example.cpr_new.core.contract.HandoverReport
@@ -43,6 +44,12 @@ class CprSessionViewModel(
     private val _state = MutableStateFlow(CprSessionState())
     val state: StateFlow<CprSessionState> = _state.asStateFlow()
 
+    /**
+     * 摄像头帧接收方：若感知源实现了 [FrameSink]（如第 3 部分真实模型需要 Android 取流），
+     * 则 CameraX 会把帧推给它；Mock 不实现，返回 null，此时相机仅做预览。
+     */
+    val frameSink: FrameSink? = deps.perceptionSource as? FrameSink
+
     // 节拍器挂在 viewModelScope，随 ViewModel 销毁自动取消。
     private val metronome = Metronome(viewModelScope)
 
@@ -71,6 +78,7 @@ class CprSessionViewModel(
 
         _state.value = CprSessionState(
             isActive = true,
+            sessionId = sessionId,
             phase = CprPhase.ASSESS,
             perceptionReady = deps.perceptionSource.isReady,
             agentReady = deps.agent.isReady,
@@ -106,7 +114,7 @@ class CprSessionViewModel(
     // region 数据流串联 -------------------------------------------------------
 
     private fun startPerception() {
-        deps.perceptionSource.start()
+        deps.perceptionSource.start(sessionId)
         viewModelScope.launch {
             runCatching {
                 deps.perceptionSource.events.collect { event -> onPerception(event) }
@@ -116,8 +124,9 @@ class CprSessionViewModel(
 
     /** 处理单条感知事件：更新质量分、记录样本、转交 Agent。 */
     private suspend fun onPerception(event: PerceptionEvent) {
-        val score = if (event.isReliable()) QualityScorer.score(event) else _state.value.qualityScore
-        event.compressionRate?.let { rateSamples.add(it) }
+        // 优先用第 3 部分给的 quality_score，缺失时兜底估算。
+        val score = QualityScorer.resolve(event, _state.value.qualityScore)
+        event.compressionRateBpm?.let { rateSamples.add(it) }
 
         _state.value = _state.value.copy(
             latestPerception = event,
@@ -141,8 +150,8 @@ class CprSessionViewModel(
     /** 应用一条 Agent 指导动作：播报 + 触觉 + 节拍变速 + 阶段切换 + 记录。 */
     private fun applyGuidance(action: GuidanceAction) {
         // CRITICAL 打断当前播报，其余排队。
-        deps.tts.speak(action.spokenText, interrupt = action.priority == GuidancePriority.CRITICAL)
-        action.haptic?.let { deps.haptics.play(it) }
+        deps.tts.speak(action.ttsText, interrupt = action.priority == GuidancePriority.CRITICAL)
+        action.hapticPattern?.let { deps.haptics.play(it) }
         action.targetRate?.let { metronome.setBpm(it) }
 
         _state.value = _state.value.copy(
@@ -150,12 +159,16 @@ class CprSessionViewModel(
             phase = action.phase,
             agentReady = true,
         )
-        log(LogEntryType.GUIDANCE, action.displayText, mapOf("phase" to action.phase.name))
+        log(
+            LogEntryType.GUIDANCE,
+            action.messageText.replace("\n", " "),
+            mapOf("code" to action.messageCode.name, "phase" to action.phase.name),
+        )
     }
 
     private fun emitFirstGuidance() {
         viewModelScope.launch {
-            runCatching { applyGuidance(deps.agent.onSessionStart()) }
+            runCatching { applyGuidance(deps.agent.onSessionStart(sessionId)) }
                 .onFailure { raiseIncident("指导引擎加载较慢，请稍候…") }
         }
     }
