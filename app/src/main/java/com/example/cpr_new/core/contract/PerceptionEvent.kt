@@ -12,8 +12,14 @@ package com.example.cpr_new.core.contract
  * 对应分工表第 3 部分输出：hand_position / compression_rate / interruption / confidence 等。
  */
 data class PerceptionEvent(
-    /** 事件产生时间（毫秒，System.currentTimeMillis 或单调时钟，由生产者约定）。 */
+    /** 事件产生时间（毫秒，单调时钟，见 [CameraInputSpec.TIMESTAMP_CLOCK]）。 */
     val timestampMs: Long,
+    /**
+     * 所属会话 id。由 Android（第 4 部分）在会话开始时生成并通过
+     * [CprPerceptionSource.start] 下发，感知源需把它回填到每条事件，
+     * 用于与日志 / 帧 / 报告对齐。默认空串便于 Mock / 单测。
+     */
+    val sessionId: String = "",
     /** 手部按压位置评估。 */
     val handPosition: HandPosition,
     /** 按压频率（次 / 分钟）。null 表示当前帧无法判定。 */

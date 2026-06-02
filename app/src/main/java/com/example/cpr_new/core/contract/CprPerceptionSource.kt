@@ -16,8 +16,11 @@ interface CprPerceptionSource {
     /** 持续输出的感知事件流。冷流，订阅后才开始产出。 */
     val events: Flow<PerceptionEvent>
 
-    /** 启动感知（如加载模型、开始推理）。应可重复调用且幂等。 */
-    fun start()
+    /**
+     * 启动感知（如加载模型、开始推理）。应可重复调用且幂等。
+     * @param sessionId 本次会话 id，由 Android 下发；实现方需回填到每条 [PerceptionEvent]。
+     */
+    fun start(sessionId: String)
 
     /** 停止感知并释放资源。 */
     fun stop()
@@ -41,6 +44,6 @@ data class FrameMeta(
     val width: Int,
     val height: Int,
     val rotationDegrees: Int,
-    val format: String,
+    val format: String,// 格式
     val timestampMs: Long,
 )
