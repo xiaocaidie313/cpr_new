@@ -86,9 +86,17 @@ fun CprGuidanceScreen(
                 state = state,
                 onStop = onStop,
                 onDialEmergency = onDialEmergency,
-                onDismissIncident = onDismissIncident,
                 cameraGranted = cameraGranted,
                 frameSink = frameSink,
+            )
+        }
+
+        // 兜底告警悬浮在顶部：出现/消失都不挤压主内容布局。
+        if (state.isActive) {
+            StatusBanner(
+                incident = state.incidentBanner,
+                onDismissIncident = onDismissIncident,
+                modifier = Modifier.align(Alignment.TopCenter),
             )
         }
 
@@ -240,7 +248,6 @@ private fun ActiveContent(
     state: CprSessionState,
     onStop: () -> Unit,
     onDialEmergency: () -> Unit,
-    onDismissIncident: () -> Unit,
     cameraGranted: Boolean,
     frameSink: FrameSink?,
 ) {
@@ -265,11 +272,6 @@ private fun ActiveContent(
                     .height(180.dp)
                     .clip(RoundedCornerShape(18.dp)),
             )
-
-            if (state.incidentBanner != null) {
-                Spacer(Modifier.height(12.dp))
-                StatusBanner(incident = state.incidentBanner, onDismissIncident = onDismissIncident)
-            }
 
             val readiness = readinessSuffix(state)
             if (readiness.isNotEmpty()) {

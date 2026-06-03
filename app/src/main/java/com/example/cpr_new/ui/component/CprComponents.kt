@@ -8,6 +8,10 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -30,6 +34,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -111,11 +116,19 @@ fun StatusBanner(
     onDismissIncident: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    AnimatedVisibility(visible = incident != null, modifier = modifier) {
+    AnimatedVisibility(
+        visible = incident != null,
+        modifier = modifier,
+        enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
+        exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                // 悬浮在内容之上：用阴影 + 不透明底色，避免下方内容透出来。
+                .shadow(10.dp, RoundedCornerShape(14.dp))
                 .clip(RoundedCornerShape(14.dp))
+                .background(EmergencyPalette.Surface)
                 .background(EmergencyPalette.WarnSoft)
                 .border(1.dp, EmergencyPalette.Warn, RoundedCornerShape(14.dp))
                 .clickable(onClick = onDismissIncident)
