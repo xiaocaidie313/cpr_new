@@ -245,64 +245,71 @@ private fun ActiveContent(
     frameSink: FrameSink?,
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
-        PhaseStepper(phase = state.phase)
-
-        // 实时摄像头预览（取流由第 4 部分负责，识别由第 3 部分负责）。
-        Spacer(Modifier.height(12.dp))
-        CameraPreview(
-            enabled = cameraGranted,
-            sessionId = state.sessionId,
-            frameSink = frameSink,
+        // 中间内容可滚动：内容超高时滚动，避免把底部操作栏挤压变形。
+        Column(
             modifier = Modifier
+                .weight(1f)
                 .fillMaxWidth()
-                .height(180.dp)
-                .clip(RoundedCornerShape(18.dp)),
-        )
-
-        if (state.incidentBanner != null) {
-            Spacer(Modifier.height(12.dp))
-            StatusBanner(incident = state.incidentBanner, onDismissIncident = onDismissIncident)
-        }
-
-        val readiness = readinessSuffix(state)
-        if (readiness.isNotEmpty()) {
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = readiness,
-                color = EmergencyPalette.Warn,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium,
-            )
-        }
-
-        Spacer(Modifier.height(14.dp))
-        GuidanceCard(
-            displayText = state.latestGuidance?.messageText.orEmpty(),
-            priority = state.latestGuidance?.priority ?: GuidancePriority.LOW,
-        )
-
-        Spacer(Modifier.height(16.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.Center,
+                .verticalScroll(rememberScrollState()),
         ) {
-            MetronomeIndicator(
-                bpm = state.metronomeBpm,
-                running = state.metronomeRunning,
-                inRange = state.rateInRange,
+            PhaseStepper(phase = state.phase)
+
+            // 实时摄像头预览（取流由第 4 部分负责，识别由第 3 部分负责）。
+            Spacer(Modifier.height(12.dp))
+            CameraPreview(
+                enabled = cameraGranted,
+                sessionId = state.sessionId,
+                frameSink = frameSink,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(180.dp)
+                    .clip(RoundedCornerShape(18.dp)),
+            )
+
+            if (state.incidentBanner != null) {
+                Spacer(Modifier.height(12.dp))
+                StatusBanner(incident = state.incidentBanner, onDismissIncident = onDismissIncident)
+            }
+
+            val readiness = readinessSuffix(state)
+            if (readiness.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = readiness,
+                    color = EmergencyPalette.Warn,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
+
+            Spacer(Modifier.height(14.dp))
+            GuidanceCard(
+                displayText = state.latestGuidance?.messageText.orEmpty(),
+                priority = state.latestGuidance?.priority ?: GuidancePriority.LOW,
+            )
+
+            Spacer(Modifier.height(16.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+            ) {
+                MetronomeIndicator(
+                    bpm = state.metronomeBpm,
+                    running = state.metronomeRunning,
+                    inRange = state.rateInRange,
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+            QualityDashboard(
+                qualityScore = state.qualityScore,
+                perception = state.latestPerception,
+                rateInRange = state.rateInRange,
             )
         }
 
-        Spacer(Modifier.height(16.dp))
-        QualityDashboard(
-            qualityScore = state.qualityScore,
-            perception = state.latestPerception,
-            rateInRange = state.rateInRange,
-        )
-
-        Spacer(Modifier.weight(1f))
-
-        // 底部操作区：醒目的 120 与结束按钮。
+        // 底部操作区固定贴底：醒目的 120 与结束按钮，高度恒定不抖动。
+        Spacer(Modifier.height(12.dp))
         Row(modifier = Modifier.fillMaxWidth()) {
             BigButton(
                 text = "拨打 120",

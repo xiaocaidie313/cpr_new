@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -166,11 +167,14 @@ fun GuidanceCard(
     Column(
         modifier = modifier
             .fillMaxWidth()
+            // 固定最小高度，避免指导文字在 1 行/2 行/有无徽章间切换时卡片高度跳动。
+            .heightIn(min = 150.dp)
             .clip(RoundedCornerShape(22.dp))
             .background(EmergencyPalette.Surface)
             .border(borderWidth, borderColor, RoundedCornerShape(22.dp))
             .padding(horizontal = 20.dp, vertical = 26.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
     ) {
         if (priority != GuidancePriority.LOW) {
             Text(
