@@ -19,6 +19,9 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // 模拟器访问宿主机 Node 服务；真机请 adb reverse tcp:8787 tcp:8787 后仍可用 127.0.0.1
+        buildConfigField("String", "COPILOT_BASE_URL", "\"http://10.0.2.2:8787\"")
     }
 
     buildTypes {
@@ -36,6 +39,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -57,6 +61,7 @@ dependencies {
     implementation(libs.androidx.camera.camera2)
     implementation(libs.androidx.camera.lifecycle)
     implementation(libs.androidx.camera.view)
+    implementation(libs.okhttp)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.android)
     androidTestImplementation(platform(libs.androidx.compose.bom))

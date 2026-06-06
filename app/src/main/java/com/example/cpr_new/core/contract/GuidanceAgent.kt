@@ -29,6 +29,12 @@ interface GuidanceAgent {
     /** 基于完整会话日志生成交接报告。 */
     suspend fun buildHandover(log: SessionLog): HandoverReport
 
+    /**
+     * 用户按钮/语音触发的额外回合（远程 Agent 实现；Mock 默认忽略）。
+     * @return 新的指导动作；无更新时返回 null。
+     */
+    suspend fun submitUserTurn(sessionId: String, text: String): GuidanceAction? = null
+
     /** Agent 是否就绪（模型加载完成）。用于“模型加载慢”的 UI 兜底。 */
     val isReady: Boolean
 }

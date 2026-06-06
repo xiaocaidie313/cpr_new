@@ -3,6 +3,9 @@ package com.example.cpr_new.feature.session
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.cpr_new.agent.copilot.CopilotActionMapper
+import com.example.cpr_new.agent.copilot.CopilotEmergencyTools
+import com.example.cpr_new.agent.copilot.CopilotHapticTools
 import com.example.cpr_new.core.contract.CprPhase
 import com.example.cpr_new.core.contract.FrameSink
 import com.example.cpr_new.core.contract.GuidanceAction
@@ -149,21 +152,77 @@ class CprSessionViewModel(
 
     /** 应用一条 Agent 指导动作：播报 + 触觉 + 节拍变速 + 阶段切换 + 记录。 */
     private fun applyGuidance(action: GuidanceAction) {
-        // CRITICAL 打断当前播报，其余排队。
+        if (action.metadata["offline"] == "true") {
+            _state.value = _state.value.copy(
+                agentConnected = false,
+                incidentBanner = action.messageText,
+            )
+            return
+        }
+
         deps.tts.speak(action.ttsText, interrupt = action.priority == GuidancePriority.CRITICAL)
         action.hapticPattern?.let { deps.haptics.play(it) }
-        action.targetRate?.let { metronome.setBpm(it) }
+        applyCopilotTools(action)
 
+        val qualityFromAgent = action.metadata["quality_score"]?.toIntOrNull()
         _state.value = _state.value.copy(
             latestGuidance = action,
             phase = action.phase,
             agentReady = true,
+            agentConnected = true,
+            agentStage = action.metadata["copilot_stage"],
+            primaryButtonLabel = action.metadata["primary_button_label"],
+            primaryButtonAction = action.metadata["primary_button_action"],
+            qualityScore = qualityFromAgent ?: _state.value.qualityScore,
         )
         log(
             LogEntryType.GUIDANCE,
             action.messageText.replace("\n", " "),
-            mapOf("code" to action.messageCode.name, "phase" to action.phase.name),
+            mapOf(
+                "code" to action.messageCode.name,
+                "phase" to action.phase.name,
+                "stage" to (action.metadata["copilot_stage"] ?: ""),
+            ),
         )
+    }
+
+    /** 执行 Agent 下发的工具动作（拨号、节拍器等）。 */
+    private fun applyCopilotTools(action: GuidanceAction) {
+        val toolTypes = action.metadata["tool_types"]?.split(",")?.filter { it.isNotBlank() }.orEmpty()
+        toolTypes.forEach { type ->
+            when (type) {
+                CopilotHapticTools.START, CopilotHapticTools.UPDATE -> {
+                    metronome.start()
+                    action.targetRate?.let { metronome.setBpm(it) }
+                }
+                CopilotHapticTools.STOP -> metronome.stop()
+                CopilotEmergencyTools.MOCK_CALL, CopilotEmergencyTools.REAL_CALL -> dialEmergency()
+            }
+        }
+        if (toolTypes.isEmpty() && action.targetRate != null && action.phase == CprPhase.COMPRESSION) {
+            metronome.start()
+            metronome.setBpm(action.targetRate)
+        }
+    }
+
+    /** 用户点击 Agent 主按钮（如「没有反应」「开始按压」）。 */
+    fun onPrimaryButtonClick() {
+        if (!_state.value.isActive) return
+        val label = _state.value.primaryButtonLabel.orEmpty()
+        val actionCode = _state.value.primaryButtonAction.orEmpty()
+        if (label.isBlank() && actionCode.isBlank()) return
+
+        val userText = CopilotActionMapper.mapButtonTextToUserInput(label, actionCode)
+        viewModelScope.launch {
+            val guidance = runCatching {
+                deps.agent.submitUserTurn(sessionId, userText)
+            }.getOrNull()
+            if (guidance != null) {
+                applyGuidance(guidance)
+            } else {
+                raiseIncident("Agent 未响应，请检查 Node 服务是否在运行")
+            }
+        }
     }
 
     private fun emitFirstGuidance() {

@@ -1,0 +1,150 @@
+package com.example.cpr_new.agent.copilot
+
+import android.content.Context
+import com.example.cpr_new.BuildConfig
+import com.example.cpr_new.core.contract.GuidanceAction
+import com.example.cpr_new.core.contract.GuidanceAgent
+import com.example.cpr_new.core.contract.HandoverReport
+import com.example.cpr_new.core.contract.PerceptionEvent
+import com.example.cpr_new.core.contract.SessionLog
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+
+/**
+ * 通过 HTTP 连接 first-aid-co-pilot Node voice server 的 [GuidanceAgent] 实现。
+ *
+ * 医疗流程在 Node 侧状态机决定；本类只负责发 TurnRequest、收 GuidanceAction 并映射成本地模型。
+ */
+class RemoteGuidanceAgent(
+    @Suppress("UNUSED_PARAMETER") context: Context,
+    private val transport: AgentTransport = HttpAgentTransport(BuildConfig.COPILOT_BASE_URL),
+) : GuidanceAgent {
+
+    private val turnMutex = Mutex()
+    private var sessionId: String = ""
+    private var currentStage: String? = null
+    private var lastPerceptionTurnMs: Long = 0L
+    private var ready: Boolean = false
+
+    override val isReady: Boolean get() = ready
+
+    override suspend fun onSessionStart(sessionId: String): GuidanceAction {
+        this.sessionId = sessionId
+        ready = transport.health()
+        if (!ready) {
+            return offlineFallback(sessionId, "无法连接 Agent 服务，请先运行 npm run voice:serve")
+        }
+
+        val deviceState = defaultDeviceState()
+        val request = sessionStartedRequest(sessionId, deviceState)
+        return postTurn(request) ?: offlineFallback(sessionId, "Agent 未返回启动指导")
+    }
+
+    override fun guidance(perception: Flow<PerceptionEvent>): Flow<GuidanceAction> = flow {
+        perception.collect { event ->
+            if (!event.isReliable()) return@collect
+            if (!shouldForwardPerception()) return@collect
+            val now = System.currentTimeMillis()
+            if (now - lastPerceptionTurnMs < PERCEPTION_MIN_INTERVAL_MS) return@collect
+            lastPerceptionTurnMs = now
+
+            val request = PerceptionEventMapper.toCprQualityTurn(
+                sessionId = sessionId,
+                event = event,
+                deviceState = defaultDeviceState(),
+            )
+            postTurn(request)?.let { emit(it) }
+        }
+    }
+
+    override suspend fun submitUserTurn(sessionId: String, text: String): GuidanceAction? {
+        this.sessionId = sessionId
+        val request = TurnRequest(
+            sessionId = sessionId,
+            text = text,
+            eventSource = "stt",
+            eventType = "user_response",
+            deviceState = defaultDeviceState(),
+        )
+        return postTurn(request)
+    }
+
+    override suspend fun buildHandover(log: SessionLog): HandoverReport {
+        val request = TurnRequest(
+            sessionId = log.sessionId,
+            eventType = "handover_requested",
+            eventSource = "device",
+            deviceState = defaultDeviceState(),
+        )
+        val response = postTurn(request)
+        val narrative = response?.messageText?.takeIf { it.isNotBlank() }
+            ?: "会话 ${log.sessionId.take(8)} 已结束，请结合录音与日志向医护交接。"
+
+        return HandoverReport(
+            sessionId = log.sessionId,
+            headline = "急救会话交接摘要",
+            highlights = listOf(
+                "按压时长约 ${log.durationMs?.div(1000) ?: 0} 秒",
+                "最终质量分 ${log.metrics["finalQualityScore"]?.toInt() ?: 0}",
+                "平均频率 ${log.metrics["avgCompressionRate"]?.toInt() ?: 0} 次/分",
+            ),
+            narrative = narrative,
+            generatedAtMs = System.currentTimeMillis(),
+        )
+    }
+
+    private suspend fun postTurn(request: TurnRequest): GuidanceAction? = turnMutex.withLock {
+        when (val result = transport.turn(request)) {
+            is TurnResult.Success -> {
+                val response = result.response
+                if (!response.ok) {
+                    return offlineFallback(
+                        request.sessionId,
+                        response.error ?: "Agent 返回错误",
+                    )
+                }
+                currentStage = response.currentStage ?: response.guidanceAction?.stage
+                response.guidanceAction?.let { copilot ->
+                    CopilotActionMapper.toLocalAction(copilot, request.sessionId)
+                }
+            }
+
+            is TurnResult.Failure -> {
+                ready = false
+                offlineFallback(request.sessionId, result.error.message)
+            }
+        }
+    }
+
+    private fun shouldForwardPerception(): Boolean {
+        val stage = currentStage ?: return false
+        return stage.contains("S7") || stage.contains("S8") || stage.contains("MONITOR")
+    }
+
+    private fun offlineFallback(sessionId: String, message: String): GuidanceAction =
+        GuidanceAction(
+            actionId = "offline_${System.currentTimeMillis()}",
+            sessionId = sessionId,
+            messageText = message,
+            ttsText = "",
+            phase = com.example.cpr_new.core.contract.CprPhase.COMPRESSION,
+            priority = com.example.cpr_new.core.contract.GuidancePriority.HIGH,
+            metadata = mapOf("offline" to "true"),
+        )
+
+    private fun defaultDeviceState(): Map<String, Any?> =
+        mapOf(
+            "camera_available" to true,
+            "mic_available" to true,
+            "gps_available" to true,
+            "recording" to true,
+            "emergency_call_started" to false,
+            "network" to "offline",
+        )
+
+    companion object {
+        private const val PERCEPTION_MIN_INTERVAL_MS = 2_000L
+    }
+}

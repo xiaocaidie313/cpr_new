@@ -1,6 +1,7 @@
 package com.example.cpr_new.core.di
 
 import android.content.Context
+import com.example.cpr_new.agent.copilot.RemoteGuidanceAgent
 import com.example.cpr_new.core.contract.CprPerceptionSource
 import com.example.cpr_new.core.contract.GuidanceAgent
 import com.example.cpr_new.feature.emergency.EmergencyDialer
@@ -12,29 +13,29 @@ import com.example.cpr_new.mock.MockCprPerceptionSource
 import com.example.cpr_new.mock.MockGuidanceAgent
 
 /**
- * 极简服务定位器（手写依赖注入）。
- *
- * 为什么不直接上 Hilt/Koin：MVP 阶段保持零额外依赖、零编译期开销，
- * 同时仍满足“可替换实现”的核心诉求。后续团队需要时可平滑迁移到 Hilt。
- *
- * === 第 2 / 3 部分对接点（重要）===
- * 当真实实现就绪时，只改这里两行：
- *   perceptionFactory = { ctx -> RealPerceptionSource(ctx) }   // 第 3 部分
- *   agentFactory      = { ctx -> GemmaGuidanceAgent(ctx) }     // 第 2 部分
- * 其余 UI / 编排代码完全不动。
+ * Agent 后端选择：
+ * - [MOCK]：离线演示，不依赖 Node 服务
+ * - [REMOTE_COPILOT]：连接 first-aid-co-pilot 的 `npm run voice:serve`
  */
+enum class AgentBackend {
+    MOCK,
+    REMOTE_COPILOT,
+}
+
 object ServiceLocator {
 
-    /** 感知源工厂。默认 Mock，可被替换为第 3 部分真实实现。 */
+    /** 切换 Agent 后端。联调 first-aid 时设为 [AgentBackend.REMOTE_COPILOT]。 */
+    var agentBackend: AgentBackend = AgentBackend.REMOTE_COPILOT
+
     var perceptionFactory: (Context) -> CprPerceptionSource = { MockCprPerceptionSource() }
 
-    /** Agent 工厂。默认 Mock，可被替换为第 2 部分真实实现。 */
-    var agentFactory: (Context) -> GuidanceAgent = { MockGuidanceAgent() }
+    var agentFactory: (Context) -> GuidanceAgent = { ctx ->
+        when (agentBackend) {
+            AgentBackend.MOCK -> MockGuidanceAgent()
+            AgentBackend.REMOTE_COPILOT -> RemoteGuidanceAgent(ctx)
+        }
+    }
 
-    /**
-     * 按需组装一份依赖。每次会话创建独立实例，避免跨会话状态串台。
-     * 硬件控制器以 applicationContext 构建，安全且无内存泄漏。
-     */
     fun provideDependencies(context: Context): CprDependencies {
         val app = context.applicationContext
         return CprDependencies(

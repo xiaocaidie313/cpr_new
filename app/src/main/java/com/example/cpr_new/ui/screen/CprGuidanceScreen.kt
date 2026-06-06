@@ -65,6 +65,7 @@ fun CprGuidanceScreen(
     onDialEmergency: () -> Unit,
     onDismissIncident: () -> Unit,
     onDismissReport: () -> Unit,
+    onPrimaryButton: () -> Unit = {},
     modifier: Modifier = Modifier,
     cameraGranted: Boolean = false,
     frameSink: FrameSink? = null,
@@ -86,6 +87,7 @@ fun CprGuidanceScreen(
                 state = state,
                 onStop = onStop,
                 onDialEmergency = onDialEmergency,
+                onPrimaryButton = onPrimaryButton,
                 cameraGranted = cameraGranted,
                 frameSink = frameSink,
             )
@@ -248,6 +250,7 @@ private fun ActiveContent(
     state: CprSessionState,
     onStop: () -> Unit,
     onDialEmergency: () -> Unit,
+    onPrimaryButton: () -> Unit,
     cameraGranted: Boolean,
     frameSink: FrameSink?,
 ) {
@@ -284,6 +287,15 @@ private fun ActiveContent(
                 )
             }
 
+            state.agentStage?.let { stage ->
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = "Agent 阶段：$stage",
+                    color = EmergencyPalette.OnSurfaceMuted,
+                    fontSize = 12.sp,
+                )
+            }
+
             Spacer(Modifier.height(14.dp))
             GuidanceCard(
                 displayText = state.latestGuidance?.messageText.orEmpty(),
@@ -308,6 +320,16 @@ private fun ActiveContent(
                 perception = state.latestPerception,
                 rateInRange = state.rateInRange,
             )
+
+            state.primaryButtonLabel?.takeIf { it.isNotBlank() }?.let { label ->
+                Spacer(Modifier.height(16.dp))
+                BigButton(
+                    text = label,
+                    container = EmergencyPalette.Primary,
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = onPrimaryButton,
+                )
+            }
         }
 
         // 底部操作区固定贴底：醒目的 120 与结束按钮，高度恒定不抖动。
@@ -375,6 +397,7 @@ private fun HandoverDialog(report: HandoverReport, onDismiss: () -> Unit) {
 
 /** 模型未就绪时的兜底提示，用于“加载慢”场景。 */
 private fun readinessSuffix(state: CprSessionState): String = when {
+    !state.agentConnected -> "Agent 离线 — 请确认已运行 npm run voice:serve"
     !state.agentReady -> "指导引擎加载中…"
     !state.perceptionReady -> "识别启动中…"
     else -> ""

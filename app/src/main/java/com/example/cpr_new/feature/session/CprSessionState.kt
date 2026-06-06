@@ -35,6 +35,15 @@ data class CprSessionState(
     val perceptionReady: Boolean = false,
     val agentReady: Boolean = false,
 
+    /** Node Agent 当前阶段（如 S2_CHECK_RESPONSE），仅远程模式有值。 */
+    val agentStage: String? = null,
+    /** Agent 下发的可点击主按钮文案。 */
+    val primaryButtonLabel: String? = null,
+    /** Agent 主按钮动作码（如 mark_unresponsive）。 */
+    val primaryButtonAction: String? = null,
+    /** Agent 服务是否在线。 */
+    val agentConnected: Boolean = false,
+
     /** 当前置顶的兜底/告警提示（断网、权限、识别失败等），null 表示无。 */
     val incidentBanner: String? = null,
 
