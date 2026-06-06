@@ -5,7 +5,9 @@ import com.example.cpr_new.agent.copilot.RemoteGuidanceAgent
 import com.example.cpr_new.core.contract.CprPerceptionSource
 import com.example.cpr_new.core.contract.GuidanceAgent
 import com.example.cpr_new.feature.emergency.EmergencyDialer
+import com.example.cpr_new.hardware.audio.AudioMetronomeController
 import com.example.cpr_new.hardware.audio.AudioRecorderController
+import com.example.cpr_new.hardware.audio.LiveAudioPlayer
 import com.example.cpr_new.hardware.audio.TtsController
 import com.example.cpr_new.hardware.haptics.HapticController
 import com.example.cpr_new.hardware.location.LocationProvider
@@ -42,6 +44,8 @@ object ServiceLocator {
             perceptionSource = perceptionFactory(app),
             agent = agentFactory(app),
             tts = TtsController(app),
+            audioMetronome = AudioMetronomeController(),
+            liveAudioPlayer = LiveAudioPlayer(),
             haptics = HapticController(app),
             location = LocationProvider(app),
             recorder = AudioRecorderController(app),

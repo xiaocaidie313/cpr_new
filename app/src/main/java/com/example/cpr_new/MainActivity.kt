@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.cpr_new.core.di.AgentBackend
 import com.example.cpr_new.core.di.ServiceLocator
 import com.example.cpr_new.feature.session.CprSessionViewModel
 import com.example.cpr_new.hardware.permission.CprPermissions
@@ -67,6 +68,8 @@ private fun CprApp(modifier: Modifier = Modifier) {
         onDismissIncident = viewModel::dismissIncident,
         onDismissReport = viewModel::dismissReport,
         onPrimaryButton = viewModel::onPrimaryButtonClick,
+        onQuickReply = viewModel::onQuickReply,
+        showQuickReplies = ServiceLocator.agentBackend == AgentBackend.REMOTE_COPILOT,
         modifier = modifier,
         // 相机权限授予后翻转，CameraPreview 会自动绑定并显示预览。
         cameraGranted = permissions.snapshot.isGranted(CprPermissions.CAMERA),

@@ -66,6 +66,8 @@ fun CprGuidanceScreen(
     onDismissIncident: () -> Unit,
     onDismissReport: () -> Unit,
     onPrimaryButton: () -> Unit = {},
+    onQuickReply: (String) -> Unit = {},
+    showQuickReplies: Boolean = false,
     modifier: Modifier = Modifier,
     cameraGranted: Boolean = false,
     frameSink: FrameSink? = null,
@@ -88,6 +90,8 @@ fun CprGuidanceScreen(
                 onStop = onStop,
                 onDialEmergency = onDialEmergency,
                 onPrimaryButton = onPrimaryButton,
+                onQuickReply = onQuickReply,
+                showQuickReplies = showQuickReplies,
                 cameraGranted = cameraGranted,
                 frameSink = frameSink,
             )
@@ -251,6 +255,8 @@ private fun ActiveContent(
     onStop: () -> Unit,
     onDialEmergency: () -> Unit,
     onPrimaryButton: () -> Unit,
+    onQuickReply: (String) -> Unit,
+    showQuickReplies: Boolean,
     cameraGranted: Boolean,
     frameSink: FrameSink?,
 ) {
@@ -330,6 +336,11 @@ private fun ActiveContent(
                     onClick = onPrimaryButton,
                 )
             }
+
+            if (showQuickReplies) {
+                Spacer(Modifier.height(12.dp))
+                QuickReplyBar(onQuickReply = onQuickReply)
+            }
         }
 
         // 底部操作区固定贴底：醒目的 120 与结束按钮，高度恒定不抖动。
@@ -348,6 +359,44 @@ private fun ActiveContent(
                 modifier = Modifier.weight(1f),
                 onClick = onStop,
             )
+        }
+    }
+}
+
+/** 联调快捷短语：模拟用户语音，推进 S1→S7 状态机。 */
+@Composable
+private fun QuickReplyBar(onQuickReply: (String) -> Unit) {
+    val phrases = listOf(
+        "现场安全了" to "现场安全",
+        "他没有反应" to "没反应",
+        "没有正常呼吸" to "没呼吸",
+        "开始按压" to "开始按压",
+    )
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(EmergencyPalette.Surface)
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            text = "快捷回复（联调）",
+            color = EmergencyPalette.OnSurfaceMuted,
+            fontSize = 12.sp,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            phrases.forEach { (spoken, label) ->
+                OutlinedButton(
+                    onClick = { onQuickReply(spoken) },
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text(label, fontSize = 12.sp, maxLines = 1)
+                }
+            }
         }
     }
 }

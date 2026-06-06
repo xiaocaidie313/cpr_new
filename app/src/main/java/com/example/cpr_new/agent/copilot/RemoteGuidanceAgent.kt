@@ -2,8 +2,10 @@ package com.example.cpr_new.agent.copilot
 
 import android.content.Context
 import com.example.cpr_new.BuildConfig
+import com.example.cpr_new.core.contract.CprPhase
 import com.example.cpr_new.core.contract.GuidanceAction
 import com.example.cpr_new.core.contract.GuidanceAgent
+import com.example.cpr_new.core.contract.GuidancePriority
 import com.example.cpr_new.core.contract.HandoverReport
 import com.example.cpr_new.core.contract.PerceptionEvent
 import com.example.cpr_new.core.contract.SessionLog
@@ -13,14 +15,16 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /**
- * 通过 HTTP 连接 first-aid-co-pilot Node voice server 的 [GuidanceAgent] 实现。
+ * 通过 HTTP + WebSocket 连接 first-aid-co-pilot Node voice server。
  *
- * 医疗流程在 Node 侧状态机决定；本类只负责发 TurnRequest、收 GuidanceAction 并映射成本地模型。
+ * - HTTP `/api/turn`：会话启动、按钮回合、感知上报、交接
+ * - WS `/ws/live`：流式 guidance、服务端 TTS 音频、阶段状态
  */
 class RemoteGuidanceAgent(
     @Suppress("UNUSED_PARAMETER") context: Context,
     private val transport: AgentTransport = HttpAgentTransport(BuildConfig.COPILOT_BASE_URL),
-) : GuidanceAgent {
+    private val wsChannel: WebSocketAgentChannel = WebSocketAgentChannel(BuildConfig.COPILOT_WS_URL),
+) : GuidanceAgent, LiveAgentCapable {
 
     private val turnMutex = Mutex()
     private var sessionId: String = ""
@@ -30,8 +34,24 @@ class RemoteGuidanceAgent(
 
     override val isReady: Boolean get() = ready
 
+    override val liveEvents: Flow<LiveAgentEvent> = wsChannel.events
+
+    override fun connectLive(sessionId: String) {
+        this.sessionId = sessionId
+        wsChannel.connect(sessionId)
+    }
+
+    override fun disconnectLive() {
+        wsChannel.close()
+    }
+
+    override fun commitText(text: String, intent: String?) {
+        wsChannel.commitText(text, intent)
+    }
+
     override suspend fun onSessionStart(sessionId: String): GuidanceAction {
         this.sessionId = sessionId
+        connectLive(sessionId)
         ready = transport.health()
         if (!ready) {
             return offlineFallback(sessionId, "无法连接 Agent 服务，请先运行 npm run voice:serve")
@@ -39,6 +59,7 @@ class RemoteGuidanceAgent(
 
         val deviceState = defaultDeviceState()
         val request = sessionStartedRequest(sessionId, deviceState)
+        wsChannel.updateContext(request)
         return postTurn(request) ?: offlineFallback(sessionId, "Agent 未返回启动指导")
     }
 
@@ -61,6 +82,7 @@ class RemoteGuidanceAgent(
 
     override suspend fun submitUserTurn(sessionId: String, text: String): GuidanceAction? {
         this.sessionId = sessionId
+        commitText(text)
         val request = TurnRequest(
             sessionId = sessionId,
             text = text,
@@ -95,15 +117,16 @@ class RemoteGuidanceAgent(
         )
     }
 
+    fun updateStage(stage: String?) {
+        currentStage = stage
+    }
+
     private suspend fun postTurn(request: TurnRequest): GuidanceAction? = turnMutex.withLock {
         when (val result = transport.turn(request)) {
             is TurnResult.Success -> {
                 val response = result.response
                 if (!response.ok) {
-                    return offlineFallback(
-                        request.sessionId,
-                        response.error ?: "Agent 返回错误",
-                    )
+                    return offlineFallback(request.sessionId, response.error ?: "Agent 返回错误")
                 }
                 currentStage = response.currentStage ?: response.guidanceAction?.stage
                 response.guidanceAction?.let { copilot ->
@@ -112,13 +135,18 @@ class RemoteGuidanceAgent(
             }
 
             is TurnResult.Failure -> {
+                if (isCompressionStage()) {
+                    return offlineCompressionFallback(request.sessionId, result.error.message)
+                }
                 ready = false
                 offlineFallback(request.sessionId, result.error.message)
             }
         }
     }
 
-    private fun shouldForwardPerception(): Boolean {
+    private fun shouldForwardPerception(): Boolean = isCompressionStage()
+
+    private fun isCompressionStage(): Boolean {
         val stage = currentStage ?: return false
         return stage.contains("S7") || stage.contains("S8") || stage.contains("MONITOR")
     }
@@ -129,9 +157,27 @@ class RemoteGuidanceAgent(
             sessionId = sessionId,
             messageText = message,
             ttsText = "",
-            phase = com.example.cpr_new.core.contract.CprPhase.COMPRESSION,
-            priority = com.example.cpr_new.core.contract.GuidancePriority.HIGH,
+            phase = CprPhase.ASSESS,
+            priority = GuidancePriority.HIGH,
             metadata = mapOf("offline" to "true"),
+        )
+
+    /** S7/S8 离线：保留本地节拍，显示继续按压（对齐 first-aid Android 兜底）。 */
+    private fun offlineCompressionFallback(sessionId: String, message: String): GuidanceAction =
+        GuidanceAction(
+            actionId = "offline_cpr_${System.currentTimeMillis()}",
+            sessionId = sessionId,
+            messageText = "继续按压",
+            ttsText = "",
+            phase = CprPhase.COMPRESSION,
+            priority = GuidancePriority.HIGH,
+            targetRate = 110,
+            metadata = mapOf(
+                "offline" to "partial",
+                "offline_detail" to message,
+                "tool_types" to CopilotHapticTools.UPDATE,
+                "copilot_stage" to (currentStage ?: "S7_CPR_LOOP"),
+            ),
         )
 
     private fun defaultDeviceState(): Map<String, Any?> =

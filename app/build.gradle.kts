@@ -22,6 +22,7 @@ android {
 
         // 模拟器访问宿主机 Node 服务；真机请 adb reverse tcp:8787 tcp:8787 后仍可用 127.0.0.1
         buildConfigField("String", "COPILOT_BASE_URL", "\"http://10.0.2.2:8787\"")
+        buildConfigField("String", "COPILOT_WS_URL", "\"ws://10.0.2.2:8787/ws/live\"")
     }
 
     buildTypes {

@@ -1,0 +1,177 @@
+package com.example.cpr_new.agent.copilot
+
+import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
+import okio.ByteString
+import okio.ByteString.Companion.toByteString
+import org.json.JSONObject
+
+class WebSocketAgentChannel(
+    private val wsUrl: String,
+    private val client: OkHttpClient = defaultClient(),
+) {
+    private val _events = MutableSharedFlow<LiveAgentEvent>(
+        replay = 0,
+        extraBufferCapacity = 64,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val events: Flow<LiveAgentEvent> = _events
+
+    private var socket: WebSocket? = null
+    private var sessionId: String = ""
+    private var mode: String = "demo_assisted"
+
+    fun connect(sessionId: String, mode: String = "demo_assisted") {
+        this.sessionId = sessionId
+        this.mode = mode
+        close()
+        socket = client.newWebSocket(Request.Builder().url(wsUrl).build(), Listener())
+    }
+
+    fun updateContext(request: TurnRequest) {
+        sendJson(
+            JSONObject()
+                .put("type", "context")
+                .put("payload", request.toJson()),
+        )
+    }
+
+    fun sendTurn(request: TurnRequest) {
+        sendJson(
+            JSONObject()
+                .put("type", "turn")
+                .put("payload", request.toJson()),
+        )
+    }
+
+    fun commitText(text: String, intent: String? = null) {
+        if (text.isBlank()) return
+        val payload = JSONObject().put("type", "commit_text").put("text", text)
+        intent?.takeIf { it.isNotBlank() }?.let { payload.put("intent", it) }
+        sendJson(payload)
+    }
+
+    fun sendBargeIn() = sendJson(JSONObject().put("type", "barge_in"))
+
+    fun reset() = sendJson(JSONObject().put("type", "reset"))
+
+    fun close() {
+        socket?.close(1000, "client closing")
+        socket = null
+    }
+
+    private fun sendStart() {
+        sendJson(
+            JSONObject()
+                .put("type", "start")
+                .put("sessionId", sessionId)
+                .put("mode", mode),
+        )
+    }
+
+    private fun sendJson(json: JSONObject) {
+        val sent = socket?.send(json.toString()) ?: false
+        if (!sent) {
+            emit(LiveAgentEvent.ConnectionChanged(connected = false, message = "WebSocket 未连接"))
+            emit(LiveAgentEvent.Error("WebSocket 未连接"))
+        }
+    }
+
+    private fun emit(event: LiveAgentEvent) {
+        _events.tryEmit(event)
+    }
+
+    private inner class Listener : WebSocketListener() {
+        override fun onOpen(webSocket: WebSocket, response: Response) {
+            emit(LiveAgentEvent.ConnectionChanged(connected = true))
+            sendStart()
+        }
+
+        override fun onMessage(webSocket: WebSocket, text: String) {
+            runCatching { handleJson(JSONObject(text)) }
+                .onFailure { emit(LiveAgentEvent.Error(it.message ?: "无法解析 WS 事件")) }
+        }
+
+        override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
+            emit(LiveAgentEvent.AudioChunk(bytes.toByteArray()))
+        }
+
+        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+            emit(LiveAgentEvent.ConnectionChanged(connected = false, message = reason.takeIf { it.isNotBlank() }))
+        }
+
+        override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+            emit(LiveAgentEvent.ConnectionChanged(connected = false, message = t.message))
+            emit(LiveAgentEvent.Error(t.message ?: "WebSocket 连接失败"))
+        }
+    }
+
+    private fun handleJson(json: JSONObject) {
+        when (json.optString("type")) {
+            "partial" -> emit(LiveAgentEvent.PartialTranscript(json.optString("text", "")))
+            "final" -> emit(
+                LiveAgentEvent.FinalTranscript(
+                    text = json.optString("text", ""),
+                    intent = json.stringOrNull("intent"),
+                ),
+            )
+            "guidance" -> {
+                val actionJson = json.optJSONObject("action") ?: return
+                val action = runCatching { parseCopilotAction(actionJson) }.getOrNull() ?: return
+                emit(
+                    LiveAgentEvent.Guidance(
+                        action = action,
+                        currentStage = json.stringOrNull("current_stage")
+                            ?: json.optJSONObject("response")?.optJSONObject("state")?.stringOrNull("current_stage"),
+                        guidanceSource = json.stringOrNull("source") ?: json.stringOrNull("guidance_source"),
+                    ),
+                )
+            }
+            "state" -> emit(LiveAgentEvent.State(json.stringOrNull("current_stage")))
+            "audio_begin" -> emit(
+                LiveAgentEvent.AudioBegin(
+                    actionId = json.stringOrNull("action_id"),
+                    sampleRate = json.intOrDefault(16_000, "sample_rate", "sampleRate"),
+                    flushQueue = json.booleanOrDefault(false, "flush_queue", "flushQueue"),
+                ),
+            )
+            "audio_end" -> emit(LiveAgentEvent.AudioEnd(json.stringOrNull("action_id")))
+            "audio_cancel", "audio_unavailable" -> emit(LiveAgentEvent.AudioCancel(json.stringOrNull("reason")))
+            "error" -> emit(
+                LiveAgentEvent.Error(
+                    json.optJSONObject("error")?.stringOrNull("message")
+                        ?: json.optString("message", "Live 通道错误"),
+                ),
+            )
+        }
+    }
+
+    private fun JSONObject.stringOrNull(key: String): String? =
+        if (has(key) && !isNull(key)) optString(key).takeIf { it.isNotEmpty() } else null
+
+    private fun JSONObject.intOrDefault(default: Int, vararg keys: String): Int =
+        keys.firstNotNullOfOrNull { key ->
+            if (has(key) && !isNull(key)) optInt(key).takeIf { it > 0 } else null
+        } ?: default
+
+    private fun JSONObject.booleanOrDefault(default: Boolean, vararg keys: String): Boolean =
+        keys.firstNotNullOfOrNull { key ->
+            if (has(key) && !isNull(key)) optBoolean(key) else null
+        } ?: default
+
+    companion object {
+        private fun defaultClient(): OkHttpClient =
+            OkHttpClient.Builder()
+                .connectTimeout(5, TimeUnit.SECONDS)
+                .readTimeout(0, TimeUnit.SECONDS)
+                .writeTimeout(10, TimeUnit.SECONDS)
+                .build()
+    }
+}

@@ -3,10 +3,16 @@ package com.example.cpr_new.feature.session
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import android.speech.tts.UtteranceProgressListener
 import com.example.cpr_new.agent.copilot.CopilotActionMapper
 import com.example.cpr_new.agent.copilot.CopilotEmergencyTools
 import com.example.cpr_new.agent.copilot.CopilotHapticTools
+import com.example.cpr_new.agent.copilot.LiveAgentCapable
+import com.example.cpr_new.agent.copilot.LiveAgentEvent
+import com.example.cpr_new.agent.copilot.RemoteGuidanceAgent
 import com.example.cpr_new.core.contract.CprPhase
+import com.example.cpr_new.core.di.AgentBackend
+import com.example.cpr_new.core.di.ServiceLocator
 import com.example.cpr_new.core.contract.FrameSink
 import com.example.cpr_new.core.contract.GuidanceAction
 import com.example.cpr_new.core.contract.GuidancePriority
@@ -16,6 +22,7 @@ import com.example.cpr_new.core.contract.PerceptionEvent
 import com.example.cpr_new.core.contract.SessionLog
 import com.example.cpr_new.core.contract.SessionLogEntry
 import com.example.cpr_new.core.di.CprDependencies
+import com.example.cpr_new.hardware.audio.AudioMetronomeController
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -65,8 +72,12 @@ class CprSessionViewModel(
     private var startedAtMs: Long = 0L
     private val rateSamples = mutableListOf<Float>()
 
+    private val useRemoteAgent: Boolean =
+        ServiceLocator.agentBackend == AgentBackend.REMOTE_COPILOT
+
     init {
         observeMetronome()
+        setupTtsDucking()
     }
 
     // region 生命周期：开始 / 结束会话 ---------------------------------------
@@ -90,7 +101,8 @@ class CprSessionViewModel(
 
         startPerception()
         startGuidance()
-        startMetronome()
+        startLiveChannel()
+        if (!useRemoteAgent) startMetronome()
         startRecordingSafely()
         captureLocation()
         emitFirstGuidance()
@@ -102,7 +114,10 @@ class CprSessionViewModel(
         log(LogEntryType.LIFECYCLE, "会话结束")
 
         deps.perceptionSource.stop()
+        (deps.agent as? LiveAgentCapable)?.disconnectLive()
         metronome.stop()
+        deps.audioMetronome.stop()
+        deps.liveAudioPlayer.release()
         deps.tts.stop()
         deps.haptics.cancel()
         val recording = runCatching { deps.recorder.stop() }.getOrNull()
@@ -150,8 +165,59 @@ class CprSessionViewModel(
         }
     }
 
+    private fun startLiveChannel() {
+        val liveAgent = deps.agent as? LiveAgentCapable ?: return
+        viewModelScope.launch {
+            liveAgent.liveEvents.collect { event -> handleLiveEvent(event) }
+        }
+    }
+
+    private fun handleLiveEvent(event: LiveAgentEvent) {
+        when (event) {
+            is LiveAgentEvent.ConnectionChanged -> {
+                _state.value = _state.value.copy(agentConnected = event.connected)
+                if (!event.connected && event.message != null) {
+                    log(LogEntryType.INCIDENT, "Live 通道：${event.message}")
+                }
+            }
+            is LiveAgentEvent.Guidance -> {
+                (deps.agent as? RemoteGuidanceAgent)?.updateStage(
+                    event.currentStage ?: event.action.stage,
+                )
+                val local = CopilotActionMapper.toLocalAction(event.action, sessionId)
+                applyGuidance(local, preferServerTts = true)
+            }
+            is LiveAgentEvent.State -> {
+                (deps.agent as? RemoteGuidanceAgent)?.updateStage(event.currentStage)
+                _state.value = _state.value.copy(agentStage = event.currentStage)
+            }
+            is LiveAgentEvent.PartialTranscript -> Unit
+            is LiveAgentEvent.FinalTranscript -> {
+                log(LogEntryType.USER_ACTION, "识别：${event.text}")
+            }
+            is LiveAgentEvent.AudioBegin -> {
+                deps.liveAudioPlayer.onAudioBegin(
+                    sampleRate = event.sampleRate,
+                    actionId = event.actionId,
+                    flushQueue = event.flushQueue,
+                )
+                deps.audioMetronome.setDucked(true)
+            }
+            is LiveAgentEvent.AudioChunk -> deps.liveAudioPlayer.onPcmChunk(event.bytes)
+            is LiveAgentEvent.AudioEnd -> {
+                deps.liveAudioPlayer.onAudioEnd(event.actionId)
+                deps.audioMetronome.setDucked(false)
+            }
+            is LiveAgentEvent.AudioCancel -> {
+                deps.liveAudioPlayer.onAudioCancel()
+                deps.audioMetronome.setDucked(false)
+            }
+            is LiveAgentEvent.Error -> raiseIncident(event.message)
+        }
+    }
+
     /** 应用一条 Agent 指导动作：播报 + 触觉 + 节拍变速 + 阶段切换 + 记录。 */
-    private fun applyGuidance(action: GuidanceAction) {
+    private fun applyGuidance(action: GuidanceAction, preferServerTts: Boolean = false) {
         if (action.metadata["offline"] == "true") {
             _state.value = _state.value.copy(
                 agentConnected = false,
@@ -160,8 +226,20 @@ class CprSessionViewModel(
             return
         }
 
-        deps.tts.speak(action.ttsText, interrupt = action.priority == GuidancePriority.CRITICAL)
-        action.hapticPattern?.let { deps.haptics.play(it) }
+        val partialOffline = action.metadata["offline"] == "partial"
+        if (partialOffline) {
+            _state.value = _state.value.copy(
+                agentConnected = false,
+                incidentBanner = action.metadata["offline_detail"] ?: "Agent 离线，继续本地按压",
+            )
+        }
+
+        if (!preferServerTts && action.ttsText.isNotBlank()) {
+            deps.tts.speak(action.ttsText, interrupt = action.priority == GuidancePriority.CRITICAL)
+        }
+        if (!useRemoteAgent) {
+            action.hapticPattern?.let { deps.haptics.play(it) }
+        }
         applyCopilotTools(action)
 
         val qualityFromAgent = action.metadata["quality_score"]?.toIntOrNull()
@@ -192,16 +270,59 @@ class CprSessionViewModel(
         toolTypes.forEach { type ->
             when (type) {
                 CopilotHapticTools.START, CopilotHapticTools.UPDATE -> {
-                    metronome.start()
-                    action.targetRate?.let { metronome.setBpm(it) }
+                    val bpm = action.targetRate ?: AudioMetronomeController.DEFAULT_BPM
+                    deps.audioMetronome.start(bpm)
+                    syncUiMetronome(bpm)
                 }
-                CopilotHapticTools.STOP -> metronome.stop()
+                CopilotHapticTools.STOP -> {
+                    deps.audioMetronome.stop()
+                    metronome.stop()
+                }
                 CopilotEmergencyTools.MOCK_CALL, CopilotEmergencyTools.REAL_CALL -> dialEmergency()
             }
         }
         if (toolTypes.isEmpty() && action.targetRate != null && action.phase == CprPhase.COMPRESSION) {
-            metronome.start()
-            metronome.setBpm(action.targetRate)
+            deps.audioMetronome.start(action.targetRate)
+            syncUiMetronome(action.targetRate)
+        }
+    }
+
+    private fun syncUiMetronome(bpm: Int) {
+        metronome.setBpm(bpm)
+        if (!metronome.running.value) metronome.start()
+    }
+
+    private fun setupTtsDucking() {
+        deps.tts.setProgressListener(
+            object : UtteranceProgressListener() {
+                override fun onStart(utteranceId: String?) {
+                    deps.audioMetronome.setDucked(true)
+                }
+
+                override fun onDone(utteranceId: String?) {
+                    deps.audioMetronome.setDucked(false)
+                }
+
+                @Deprecated("Deprecated in Java")
+                override fun onError(utteranceId: String?) {
+                    deps.audioMetronome.setDucked(false)
+                }
+            },
+        )
+    }
+
+    /** 模拟语音输入（联调常用短语，走与主按钮相同的 Agent 回合）。 */
+    fun onQuickReply(text: String) {
+        if (!_state.value.isActive || text.isBlank()) return
+        viewModelScope.launch {
+            val guidance = runCatching {
+                deps.agent.submitUserTurn(sessionId, text)
+            }.getOrNull()
+            if (guidance != null) {
+                applyGuidance(guidance)
+            } else {
+                raiseIncident("Agent 未响应：$text")
+            }
         }
     }
 
@@ -247,10 +368,14 @@ class CprSessionViewModel(
                 _state.value = _state.value.copy(metronomeRunning = running)
             }
         }
-        // 每一拍触发一次轻触反馈（仅在会话进行中）。
-        viewModelScope.launch {
-            metronome.ticks.collect {
-                if (_state.value.isActive) deps.haptics.play(com.example.cpr_new.core.contract.HapticPattern.TICK)
+        // Mock 模式：每一拍震动；远程模式由 AudioMetronome 发声，不再震动。
+        if (!useRemoteAgent) {
+            viewModelScope.launch {
+                metronome.ticks.collect {
+                    if (_state.value.isActive) {
+                        deps.haptics.play(com.example.cpr_new.core.contract.HapticPattern.TICK)
+                    }
+                }
             }
         }
     }
@@ -350,7 +475,10 @@ class CprSessionViewModel(
         super.onCleared()
         // 兜底释放硬件资源，防止泄漏。
         runCatching { deps.perceptionSource.stop() }
+        (deps.agent as? LiveAgentCapable)?.disconnectLive()
         metronome.stop()
+        deps.audioMetronome.release()
+        deps.liveAudioPlayer.release()
         deps.tts.release()
         deps.recorder.release()
         deps.haptics.cancel()

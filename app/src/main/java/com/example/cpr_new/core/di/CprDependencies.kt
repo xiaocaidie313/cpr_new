@@ -3,7 +3,9 @@ package com.example.cpr_new.core.di
 import com.example.cpr_new.core.contract.CprPerceptionSource
 import com.example.cpr_new.core.contract.GuidanceAgent
 import com.example.cpr_new.feature.emergency.EmergencyDialer
+import com.example.cpr_new.hardware.audio.AudioMetronomeController
 import com.example.cpr_new.hardware.audio.AudioRecorderController
+import com.example.cpr_new.hardware.audio.LiveAudioPlayer
 import com.example.cpr_new.hardware.audio.TtsController
 import com.example.cpr_new.hardware.haptics.HapticController
 import com.example.cpr_new.hardware.location.LocationProvider
@@ -23,6 +25,8 @@ data class CprDependencies(
     val agent: GuidanceAgent,
     /** 硬件能力。 */
     val tts: TtsController,
+    val audioMetronome: AudioMetronomeController,
+    val liveAudioPlayer: LiveAudioPlayer,
     val haptics: HapticController,
     val location: LocationProvider,
     val recorder: AudioRecorderController,
