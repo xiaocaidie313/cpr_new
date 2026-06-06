@@ -58,6 +58,11 @@ class WebSocketAgentChannel(
         sendJson(payload)
     }
 
+    fun sendPcm(pcm16: ByteArray) {
+        if (pcm16.isEmpty()) return
+        socket?.send(pcm16.toByteString())
+    }
+
     fun sendBargeIn() = sendJson(JSONObject().put("type", "barge_in"))
 
     fun reset() = sendJson(JSONObject().put("type", "reset"))

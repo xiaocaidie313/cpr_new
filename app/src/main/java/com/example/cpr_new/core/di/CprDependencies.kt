@@ -5,8 +5,10 @@ import com.example.cpr_new.core.contract.GuidanceAgent
 import com.example.cpr_new.feature.emergency.EmergencyDialer
 import com.example.cpr_new.hardware.audio.AudioMetronomeController
 import com.example.cpr_new.hardware.audio.AudioRecorderController
+import com.example.cpr_new.hardware.audio.LiveAudioCapture
 import com.example.cpr_new.hardware.audio.LiveAudioPlayer
 import com.example.cpr_new.hardware.audio.TtsController
+import com.example.cpr_new.hardware.audio.TurnTtsPlayer
 import com.example.cpr_new.hardware.haptics.HapticController
 import com.example.cpr_new.hardware.location.LocationProvider
 
@@ -27,6 +29,8 @@ data class CprDependencies(
     val tts: TtsController,
     val audioMetronome: AudioMetronomeController,
     val liveAudioPlayer: LiveAudioPlayer,
+    val liveAudioCapture: LiveAudioCapture,
+    val turnTtsPlayer: TurnTtsPlayer,
     val haptics: HapticController,
     val location: LocationProvider,
     val recorder: AudioRecorderController,

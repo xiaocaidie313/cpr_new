@@ -78,12 +78,13 @@ class CprSessionViewModel(
     init {
         observeMetronome()
         setupTtsDucking()
+        setupSpeakingCallbacks()
     }
 
     // region 生命周期：开始 / 结束会话 ---------------------------------------
 
     /** 开始一次急救会话：拉起感知、Agent、节拍器、录音、定位。 */
-    fun startSession() {
+    fun startSession(micGranted: Boolean = false) {
         if (_state.value.isActive) return
         sessionId = UUID.randomUUID().toString()
         startedAtMs = System.currentTimeMillis()
@@ -102,6 +103,7 @@ class CprSessionViewModel(
         startPerception()
         startGuidance()
         startLiveChannel()
+        startLiveCapture(micGranted)
         if (!useRemoteAgent) startMetronome()
         startRecordingSafely()
         captureLocation()
@@ -117,13 +119,20 @@ class CprSessionViewModel(
         (deps.agent as? LiveAgentCapable)?.disconnectLive()
         metronome.stop()
         deps.audioMetronome.stop()
+        deps.liveAudioCapture.release()
         deps.liveAudioPlayer.release()
+        deps.turnTtsPlayer.stop()
         deps.tts.stop()
         deps.haptics.cancel()
         val recording = runCatching { deps.recorder.stop() }.getOrNull()
         if (recording != null) log(LogEntryType.USER_ACTION, "已保存录音：${recording.name}")
 
-        _state.value = _state.value.copy(isActive = false, metronomeRunning = false)
+        _state.value = _state.value.copy(
+            isActive = false,
+            metronomeRunning = false,
+            micListening = false,
+            partialTranscript = "",
+        )
         buildHandover()
     }
 
@@ -172,6 +181,22 @@ class CprSessionViewModel(
         }
     }
 
+    private fun startLiveCapture(micGranted: Boolean) {
+        if (!useRemoteAgent || !micGranted) {
+            if (useRemoteAgent && !micGranted) {
+                log(LogEntryType.INCIDENT, "未授予麦克风，语音输入不可用（仍可用快捷回复）")
+            }
+            return
+        }
+        val liveAgent = deps.agent as? LiveAgentCapable ?: return
+        deps.liveAudioCapture.start(
+            onPcmChunk = { liveAgent.sendPcm(it) },
+            onBargeIn = { liveAgent.sendBargeIn() },
+            onError = { raiseIncident("麦克风：$it") },
+        )
+        _state.value = _state.value.copy(micListening = true)
+    }
+
     private fun handleLiveEvent(event: LiveAgentEvent) {
         when (event) {
             is LiveAgentEvent.ConnectionChanged -> {
@@ -191,26 +216,29 @@ class CprSessionViewModel(
                 (deps.agent as? RemoteGuidanceAgent)?.updateStage(event.currentStage)
                 _state.value = _state.value.copy(agentStage = event.currentStage)
             }
-            is LiveAgentEvent.PartialTranscript -> Unit
+            is LiveAgentEvent.PartialTranscript -> {
+                _state.value = _state.value.copy(partialTranscript = event.text)
+            }
             is LiveAgentEvent.FinalTranscript -> {
+                _state.value = _state.value.copy(partialTranscript = "")
                 log(LogEntryType.USER_ACTION, "识别：${event.text}")
             }
             is LiveAgentEvent.AudioBegin -> {
+                setAgentSpeaking(true)
                 deps.liveAudioPlayer.onAudioBegin(
                     sampleRate = event.sampleRate,
                     actionId = event.actionId,
                     flushQueue = event.flushQueue,
                 )
-                deps.audioMetronome.setDucked(true)
             }
             is LiveAgentEvent.AudioChunk -> deps.liveAudioPlayer.onPcmChunk(event.bytes)
             is LiveAgentEvent.AudioEnd -> {
                 deps.liveAudioPlayer.onAudioEnd(event.actionId)
-                deps.audioMetronome.setDucked(false)
+                setAgentSpeaking(false)
             }
             is LiveAgentEvent.AudioCancel -> {
                 deps.liveAudioPlayer.onAudioCancel()
-                deps.audioMetronome.setDucked(false)
+                setAgentSpeaking(false)
             }
             is LiveAgentEvent.Error -> raiseIncident(event.message)
         }
@@ -234,8 +262,13 @@ class CprSessionViewModel(
             )
         }
 
-        if (!preferServerTts && action.ttsText.isNotBlank()) {
-            deps.tts.speak(action.ttsText, interrupt = action.priority == GuidancePriority.CRITICAL)
+        val ttsAudioSrc = action.metadata["tts_audio_src"]
+        when {
+            preferServerTts -> Unit
+            !ttsAudioSrc.isNullOrBlank() -> deps.turnTtsPlayer.play(ttsAudioSrc)
+            action.ttsText.isNotBlank() -> {
+                deps.tts.speak(action.ttsText, interrupt = action.priority == GuidancePriority.CRITICAL)
+            }
         }
         if (!useRemoteAgent) {
             action.hapticPattern?.let { deps.haptics.play(it) }
@@ -295,20 +328,23 @@ class CprSessionViewModel(
     private fun setupTtsDucking() {
         deps.tts.setProgressListener(
             object : UtteranceProgressListener() {
-                override fun onStart(utteranceId: String?) {
-                    deps.audioMetronome.setDucked(true)
-                }
+                override fun onStart(utteranceId: String?) = setAgentSpeaking(true)
 
-                override fun onDone(utteranceId: String?) {
-                    deps.audioMetronome.setDucked(false)
-                }
+                override fun onDone(utteranceId: String?) = setAgentSpeaking(false)
 
                 @Deprecated("Deprecated in Java")
-                override fun onError(utteranceId: String?) {
-                    deps.audioMetronome.setDucked(false)
-                }
+                override fun onError(utteranceId: String?) = setAgentSpeaking(false)
             },
         )
+    }
+
+    private fun setupSpeakingCallbacks() {
+        deps.turnTtsPlayer.onSpeakingChanged = { speaking -> setAgentSpeaking(speaking) }
+    }
+
+    private fun setAgentSpeaking(speaking: Boolean) {
+        deps.liveAudioCapture.setTtsSpeaking(speaking)
+        deps.audioMetronome.setDucked(speaking)
     }
 
     /** 模拟语音输入（联调常用短语，走与主按钮相同的 Agent 回合）。 */
@@ -478,7 +514,9 @@ class CprSessionViewModel(
         (deps.agent as? LiveAgentCapable)?.disconnectLive()
         metronome.stop()
         deps.audioMetronome.release()
+        deps.liveAudioCapture.release()
         deps.liveAudioPlayer.release()
+        deps.turnTtsPlayer.release()
         deps.tts.release()
         deps.recorder.release()
         deps.haptics.cancel()

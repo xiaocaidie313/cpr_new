@@ -44,6 +44,11 @@ data class CprSessionState(
     /** Agent 服务是否在线。 */
     val agentConnected: Boolean = false,
 
+    /** Live 麦克风是否在向 WS 送 PCM。 */
+    val micListening: Boolean = false,
+    /** 流式 STT 中间结果（字幕）。 */
+    val partialTranscript: String = "",
+
     /** 当前置顶的兜底/告警提示（断网、权限、识别失败等），null 表示无。 */
     val incidentBanner: String? = null,
 

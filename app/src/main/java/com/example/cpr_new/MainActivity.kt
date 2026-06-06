@@ -18,6 +18,7 @@ import com.example.cpr_new.core.di.AgentBackend
 import com.example.cpr_new.core.di.ServiceLocator
 import com.example.cpr_new.feature.session.CprSessionViewModel
 import com.example.cpr_new.hardware.permission.CprPermissions
+import com.example.cpr_new.hardware.permission.CprPermissions.RECORD_AUDIO
 import com.example.cpr_new.hardware.permission.rememberPermissionState
 import com.example.cpr_new.ui.screen.CprGuidanceScreen
 import com.example.cpr_new.ui.theme.Cpr_newTheme
@@ -59,9 +60,9 @@ private fun CprApp(modifier: Modifier = Modifier) {
     CprGuidanceScreen(
         state = state,
         onStart = {
-            // 先确保权限再开始；即使被拒，会话仍会以降级模式运行（兜底已在 VM 内处理）。
             if (!permissions.snapshot.allGranted) permissions.request()
-            viewModel.startSession()
+            val micGranted = permissions.snapshot.isGranted(RECORD_AUDIO)
+            viewModel.startSession(micGranted = micGranted)
         },
         onStop = viewModel::stopSession,
         onDialEmergency = viewModel::dialEmergency,

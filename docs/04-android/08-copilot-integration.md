@@ -81,7 +81,14 @@ cd C:\Users\Liam\AndroidStudioProjects\cpr_new
 - 完全连不上：提示运行 `npm run voice:serve`
 - S7/S8 中途断连：显示「继续按压」，本地 110bpm 音频节拍保持（`offline=partial`）
 
+## 语音半双工（已实现）
+
+- `LiveAudioCapture`：16kHz PCM → WS 二进制帧
+- 播报期间暂停采集；支持 `barge_in` 打断
+- HTTP 回合返回的 `tts.audio.url` / `data_url` 由 `TurnTtsPlayer` 播放
+- WS 流式 TTS 仍走 `LiveAudioPlayer`
+
 ## 尚未实现
 
-- 麦克风 VAD + PCM 流式上传（`/ws/live` 半双工语音）
-- HTTP 响应里的 `tts.audio` URL 播放（当前 WS 流式 TTS 或本地 TTS 二选一）
+- 分享/删除确认门控
+- 端侧嵌入 STT/TTS（完全离线）

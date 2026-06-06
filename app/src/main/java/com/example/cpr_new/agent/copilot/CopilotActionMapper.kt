@@ -11,6 +11,7 @@ object CopilotActionMapper {
     fun toLocalAction(
         copilot: CopilotGuidanceAction,
         sessionId: String,
+        ttsAudioSrc: String? = null,
     ): GuidanceAction {
         val primaryButton = copilot.ui.primaryButton
         val primaryLabel = primaryButton?.get("label")?.toString().orEmpty()
@@ -39,6 +40,7 @@ object CopilotActionMapper {
                 if (primaryAction.isNotBlank()) put("primary_button_action", primaryAction)
                 if (toolTypes.isNotBlank()) put("tool_types", toolTypes)
                 copilot.ui.qualityScore?.let { put("quality_score", it.toString()) }
+                ttsAudioSrc?.takeIf { it.isNotBlank() }?.let { put("tts_audio_src", it) }
             },
         )
     }

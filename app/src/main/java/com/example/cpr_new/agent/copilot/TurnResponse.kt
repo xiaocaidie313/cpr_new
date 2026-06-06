@@ -10,13 +10,17 @@ data class TurnResponse(
     val guidanceAction: CopilotGuidanceAction?,
     val guidanceSource: String?,
     val ttsText: String,
+    val ttsAudioUrl: String?,
+    val ttsAudioDataUrl: String?,
     val error: String?,
 ) {
-    val ttsAudioSrc: String? = null
+    val ttsAudioSrc: String?
+        get() = ttsAudioUrl ?: ttsAudioDataUrl
 }
 
 fun parseTurnResponse(json: JSONObject): TurnResponse {
     val state = json.optJSONObject("state")
+    val ttsAudio = json.optJSONObject("tts")?.optJSONObject("audio")
     val guidanceAction = json.optJSONObject("guidance_action")
         ?.takeIf { it.has("action_id") }
         ?.let { runCatching { parseCopilotAction(it) }.getOrNull() }
@@ -31,6 +35,8 @@ fun parseTurnResponse(json: JSONObject): TurnResponse {
         guidanceAction = guidanceAction,
         guidanceSource = json.stringOrNull("guidance_source"),
         ttsText = ttsText,
+        ttsAudioUrl = ttsAudio?.stringOrNull("url"),
+        ttsAudioDataUrl = ttsAudio?.stringOrNull("data_url"),
         error = json.optJSONObject("error")?.stringOrNull("message"),
     )
 }

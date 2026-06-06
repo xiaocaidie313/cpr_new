@@ -8,6 +8,10 @@ interface LiveAgentCapable {
     fun connectLive(sessionId: String)
     fun disconnectLive()
     fun commitText(text: String, intent: String? = null)
+
+    fun sendPcm(pcm16: ByteArray)
+
+    fun sendBargeIn()
 }
 
 sealed interface LiveAgentEvent {

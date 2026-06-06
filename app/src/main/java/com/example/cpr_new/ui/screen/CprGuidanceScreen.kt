@@ -302,6 +302,24 @@ private fun ActiveContent(
                 )
             }
 
+            if (state.micListening) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = "🎤 正在聆听…",
+                    color = EmergencyPalette.Accent,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
+            if (state.partialTranscript.isNotBlank()) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "「${state.partialTranscript}」",
+                    color = EmergencyPalette.OnSurfaceMuted,
+                    fontSize = 13.sp,
+                )
+            }
+
             Spacer(Modifier.height(14.dp))
             GuidanceCard(
                 displayText = state.latestGuidance?.messageText.orEmpty(),

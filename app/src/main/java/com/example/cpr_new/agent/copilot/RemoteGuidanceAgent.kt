@@ -49,6 +49,14 @@ class RemoteGuidanceAgent(
         wsChannel.commitText(text, intent)
     }
 
+    override fun sendPcm(pcm16: ByteArray) {
+        wsChannel.sendPcm(pcm16)
+    }
+
+    override fun sendBargeIn() {
+        wsChannel.sendBargeIn()
+    }
+
     override suspend fun onSessionStart(sessionId: String): GuidanceAction {
         this.sessionId = sessionId
         connectLive(sessionId)
@@ -130,7 +138,11 @@ class RemoteGuidanceAgent(
                 }
                 currentStage = response.currentStage ?: response.guidanceAction?.stage
                 response.guidanceAction?.let { copilot ->
-                    CopilotActionMapper.toLocalAction(copilot, request.sessionId)
+                    CopilotActionMapper.toLocalAction(
+                        copilot,
+                        request.sessionId,
+                        ttsAudioSrc = response.ttsAudioSrc,
+                    )
                 }
             }
 
