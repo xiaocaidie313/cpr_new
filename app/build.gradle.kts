@@ -1,3 +1,4 @@
+import java.io.File
 import java.util.Properties
 
 plugins {
@@ -10,6 +11,34 @@ val localProperties = Properties().apply {
     rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use(::load)
 }
 val copilotHost: String = localProperties.getProperty("copilot.host", "127.0.0.1")
+
+val copilotNetworkResPath = layout.buildDirectory.dir("generated/res/copilotNetwork")
+
+val generateCopilotNetworkSecurityConfig by tasks.registering {
+    val outDir = copilotNetworkResPath.get().asFile
+    outputs.dir(outDir)
+    doLast {
+        val xmlDir = File(outDir, "xml").apply { mkdirs() }
+        val knownHosts = setOf("127.0.0.1", "10.0.2.2", "localhost")
+        val extraDomain = if (copilotHost !in knownHosts) {
+            "        <domain includeSubdomains=\"false\">$copilotHost</domain>\n"
+        } else {
+            ""
+        }
+        File(xmlDir, "network_security_config.xml").writeText(
+            """
+            <?xml version="1.0" encoding="utf-8"?>
+            <network-security-config>
+                <domain-config cleartextTrafficPermitted="true">
+                    <domain includeSubdomains="false">127.0.0.1</domain>
+                    <domain includeSubdomains="false">10.0.2.2</domain>
+                    <domain includeSubdomains="false">localhost</domain>
+            $extraDomain    </domain-config>
+            </network-security-config>
+            """.trimIndent() + "\n",
+        )
+    }
+}
 
 android {
     namespace = "com.example.cpr_new"
@@ -49,6 +78,20 @@ android {
         compose = true
         buildConfig = true
     }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
+
+    sourceSets {
+        getByName("main") {
+            res.srcDir("build/generated/res/copilotNetwork")
+        }
+    }
+}
+
+tasks.named("preBuild").configure {
+    dependsOn(generateCopilotNetworkSecurityConfig)
 }
 
 dependencies {

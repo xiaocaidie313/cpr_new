@@ -23,6 +23,7 @@ class TurnTtsPlayer(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val client = OkHttpClient()
     private var player: MediaPlayer? = null
+    private var tempFile: File? = null
 
     fun play(src: String?) {
         if (src.isNullOrBlank()) return
@@ -65,6 +66,8 @@ class TurnTtsPlayer(
             player?.release()
         }
         player = null
+        tempFile?.delete()
+        tempFile = null
     }
 
     private fun resolveSrc(src: String): String =
@@ -91,6 +94,7 @@ class TurnTtsPlayer(
     private fun playBytes(bytes: ByteArray): MediaPlayer {
         val temp = File.createTempFile("turn_tts_", ".wav")
         temp.writeBytes(bytes)
+        tempFile = temp
         return MediaPlayer().apply { setDataSource(temp.absolutePath); prepare() }
     }
 }

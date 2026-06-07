@@ -39,6 +39,16 @@ interface GuidanceAgent {
         viaLiveVoice: Boolean = false,
     ): GuidanceAction? = null
 
+    /** 用户确认/拒绝需二次授权的工具（如分享视频）。 */
+    suspend fun submitToolResult(
+        sessionId: String,
+        toolType: String,
+        confirmed: Boolean,
+    ): GuidanceAction? = null
+
+    /** 主动上报设备状态变化（如拨号完成），供 co-pilot 状态机跟进。 */
+    suspend fun publishDeviceState(sessionId: String): GuidanceAction? = null
+
     /** Agent 是否就绪（模型加载完成）。用于“模型加载慢”的 UI 兜底。 */
     val isReady: Boolean
 }

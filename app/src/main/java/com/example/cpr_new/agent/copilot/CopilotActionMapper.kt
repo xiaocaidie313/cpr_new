@@ -70,6 +70,9 @@ object CopilotActionMapper {
             "confirm_scene_safe" -> "现场安全了"
             "start_cpr" -> "开始按压"
             "continue_cpr" -> "开始按压"
+            "confirm_share_video" -> "确认分享"
+            "confirm_share_report" -> "确认分享报告"
+            "decline_share_video" -> "不分享"
             else -> label.ifBlank { action }
         }
 

@@ -9,6 +9,7 @@ import com.example.cpr_new.hardware.audio.LiveAudioCapture
 import com.example.cpr_new.hardware.audio.LiveAudioPlayer
 import com.example.cpr_new.hardware.audio.TtsController
 import com.example.cpr_new.hardware.audio.TurnTtsPlayer
+import com.example.cpr_new.hardware.device.DeviceStateProvider
 import com.example.cpr_new.hardware.haptics.HapticController
 import com.example.cpr_new.hardware.location.LocationProvider
 
@@ -35,4 +36,6 @@ data class CprDependencies(
     val location: LocationProvider,
     val recorder: AudioRecorderController,
     val dialer: EmergencyDialer,
+    /** 动态设备快照，供 Remote Agent 上报 co-pilot。 */
+    val deviceState: DeviceStateProvider,
 )

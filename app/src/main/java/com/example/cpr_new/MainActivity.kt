@@ -75,6 +75,7 @@ private fun CprApp(modifier: Modifier = Modifier) {
         onStartAudio = viewModel::startLiveAudio,
         onStopAudio = viewModel::stopLiveAudio,
         onSubmitText = viewModel::submitTextInput,
+        onConfirmPendingTool = viewModel::confirmPendingTool,
         onRequestMicPermission = {
             if (!permissions.snapshot.isGranted(RECORD_AUDIO)) permissions.request()
             viewModel.enableLiveCapture(micGranted = permissions.snapshot.isGranted(RECORD_AUDIO))

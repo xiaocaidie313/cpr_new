@@ -64,7 +64,7 @@ class LiveAudioCapture {
     }
 
     @SuppressLint("MissingPermission")
-    private fun captureLoop(
+    private suspend fun captureLoop(
         onPcmChunk: (ByteArray) -> Unit,
         onBargeIn: () -> Unit,
         onLevel: ((Float) -> Unit)?,
@@ -95,7 +95,7 @@ class LiveAudioCapture {
             audioRecord.startRecording()
             while (running.get()) {
                 if (paused.get()) {
-                    Thread.sleep(50)
+                    delay(50)
                     continue
                 }
                 val count = audioRecord.read(readBuffer, 0, readBuffer.size)

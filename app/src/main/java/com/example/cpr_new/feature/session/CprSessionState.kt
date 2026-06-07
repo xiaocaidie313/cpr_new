@@ -71,6 +71,11 @@ data class CprSessionState(
 
     /** 会话结束后的交接报告。 */
     val handoverReport: HandoverReport? = null,
+
+    /** 待用户二次确认的工具类型（如 share_video），null 表示无。 */
+    val pendingConfirmTool: String? = null,
+    /** 待确认弹窗文案。 */
+    val pendingConfirmMessage: String? = null,
 ) {
     /** 频率是否在标准区间内，UI 用于决定仪表盘配色。 */
     val rateInRange: Boolean

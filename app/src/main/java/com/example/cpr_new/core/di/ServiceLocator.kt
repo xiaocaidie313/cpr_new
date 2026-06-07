@@ -12,6 +12,7 @@ import com.example.cpr_new.hardware.audio.LiveAudioCapture
 import com.example.cpr_new.hardware.audio.LiveAudioPlayer
 import com.example.cpr_new.hardware.audio.TtsController
 import com.example.cpr_new.hardware.audio.TurnTtsPlayer
+import com.example.cpr_new.hardware.device.DeviceStateProvider
 import com.example.cpr_new.hardware.haptics.HapticController
 import com.example.cpr_new.hardware.location.LocationProvider
 import com.example.cpr_new.mock.MockCprPerceptionSource
@@ -34,18 +35,20 @@ object ServiceLocator {
 
     var perceptionFactory: (Context) -> CprPerceptionSource = { MockCprPerceptionSource() }
 
-    var agentFactory: (Context) -> GuidanceAgent = { ctx ->
+    var agentFactory: (Context, DeviceStateProvider) -> GuidanceAgent = { ctx, deviceState ->
         when (agentBackend) {
             AgentBackend.MOCK -> MockGuidanceAgent()
-            AgentBackend.REMOTE_COPILOT -> RemoteGuidanceAgent(ctx)
+            AgentBackend.REMOTE_COPILOT -> RemoteGuidanceAgent(ctx, deviceState)
         }
     }
 
     fun provideDependencies(context: Context): CprDependencies {
         val app = context.applicationContext
+        val recorder = AudioRecorderController(app)
+        val deviceState = DeviceStateProvider(app, recorder)
         return CprDependencies(
             perceptionSource = perceptionFactory(app),
-            agent = agentFactory(app),
+            agent = agentFactory(app, deviceState),
             tts = TtsController(app),
             audioMetronome = AudioMetronomeController(),
             liveAudioPlayer = LiveAudioPlayer(),
@@ -53,8 +56,9 @@ object ServiceLocator {
             turnTtsPlayer = TurnTtsPlayer(BuildConfig.COPILOT_BASE_URL),
             haptics = HapticController(app),
             location = LocationProvider(app),
-            recorder = AudioRecorderController(app),
+            recorder = recorder,
             dialer = EmergencyDialer(app),
+            deviceState = deviceState,
         )
     }
 }

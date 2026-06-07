@@ -14,11 +14,15 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -50,6 +54,7 @@ import androidx.compose.ui.unit.sp
 import com.example.cpr_new.feature.session.CprSessionState
 import com.example.cpr_new.feature.session.MicState
 import com.example.cpr_new.ui.AttentionMode
+import com.example.cpr_new.ui.CoachLayoutMetrics
 import com.example.cpr_new.ui.CoachPalette
 import com.example.cpr_new.ui.QualityScoreTone
 import com.example.cpr_new.ui.agentStageIndex
@@ -65,20 +70,21 @@ import com.example.cpr_new.ui.voiceControlPresentation
 @Composable
 fun AgentTopStatusBar(
     state: CprSessionState,
-    onDialEmergency: () -> Unit = {},
-    onStop: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val (chipLabel, chipColor) = connectionChip(state.agentConnected, state.liveWsConnected)
     Surface(
         color = CoachPalette.TopBar,
-        shape = RoundedCornerShape(22.dp),
-        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = CoachLayoutMetrics.TopBarHeight),
+        shadowElevation = 4.dp,
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             StatusChip(chipLabel, chipColor)
             Text(
@@ -90,26 +96,7 @@ fun AgentTopStatusBar(
                 overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.End,
             )
-            TopActionChip("120", CoachPalette.ActionEmergency, onDialEmergency)
-            TopActionChip("结束", CoachPalette.Outline, onStop)
         }
-    }
-}
-
-@Composable
-private fun TopActionChip(label: String, tint: Color, onClick: () -> Unit) {
-    Surface(
-        color = tint.copy(alpha = 0.22f),
-        shape = CircleShape,
-        modifier = Modifier.clickable(onClick = onClick),
-    ) {
-        Text(
-            text = label,
-            color = CoachPalette.TextPrimary,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-        )
     }
 }
 
@@ -155,13 +142,14 @@ fun AgentFlowRail(agentStage: String?, modifier: Modifier = Modifier) {
 @Composable
 fun CoachAttentionLayout(
     state: CprSessionState,
+    contentPadding: PaddingValues,
     onPrimaryButton: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(
         modifier = modifier
             .fillMaxSize()
-            .padding(horizontal = 24.dp, vertical = 92.dp),
+            .padding(contentPadding),
         verticalArrangement = Arrangement.SpaceBetween,
     ) {
         AgentFlowRail(agentStage = state.agentStage)
@@ -170,7 +158,11 @@ fun CoachAttentionLayout(
 }
 
 @Composable
-fun EyesOffAttentionLayout(state: CprSessionState, modifier: Modifier = Modifier) {
+fun EyesOffAttentionLayout(
+    state: CprSessionState,
+    contentPadding: PaddingValues,
+    modifier: Modifier = Modifier,
+) {
     val mainText = primaryGuidanceText(
         state.latestGuidance?.messageText.orEmpty(),
         state.agentStage,
@@ -178,17 +170,17 @@ fun EyesOffAttentionLayout(state: CprSessionState, modifier: Modifier = Modifier
     Column(
         modifier = modifier
             .fillMaxSize()
-            .padding(horizontal = 20.dp, vertical = 116.dp),
+            .padding(contentPadding),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
             text = mainText,
             color = CoachPalette.TextPrimary,
-            fontSize = 46.sp,
+            fontSize = 40.sp,
             fontWeight = FontWeight.Black,
             textAlign = TextAlign.Center,
-            lineHeight = 52.sp,
+            lineHeight = 46.sp,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
@@ -214,13 +206,14 @@ fun EyesOffAttentionLayout(state: CprSessionState, modifier: Modifier = Modifier
 @Composable
 fun GlanceableAttentionLayout(
     state: CprSessionState,
+    contentPadding: PaddingValues,
     onPrimaryButton: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(
         modifier = modifier
             .fillMaxSize()
-            .padding(horizontal = 22.dp, vertical = 108.dp),
+            .padding(contentPadding),
         verticalArrangement = Arrangement.Bottom,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -245,13 +238,13 @@ fun GuidanceCard(
         modifier = modifier.fillMaxWidth(),
     ) {
         Column(
-            modifier = Modifier.padding(22.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text(
                 text = mainText,
                 color = CoachPalette.TextPrimary,
-                fontSize = if (large) 36.sp else 28.sp,
+                fontSize = if (large) 32.sp else 26.sp,
                 fontWeight = FontWeight.Bold,
                 maxLines = if (large) 2 else 2,
                 overflow = TextOverflow.Ellipsis,
@@ -462,7 +455,10 @@ fun LiveVoiceControls(
     onStopAudio: () -> Unit,
     onSubmitText: (String) -> Unit,
     onRequestMicPermission: () -> Unit,
+    onDialEmergency: () -> Unit,
+    onStop: () -> Unit,
     hasMicPermission: Boolean,
+    onInputExpandedChanged: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var text by remember { mutableStateOf("") }
@@ -474,25 +470,29 @@ fun LiveVoiceControls(
         else -> CoachPalette.ActionListen
     }
 
+    fun setExpanded(expanded: Boolean) {
+        inputExpanded = expanded
+        onInputExpandedChanged(expanded)
+    }
+
     Surface(
         color = CoachPalette.VoiceBar,
-        shape = RoundedCornerShape(26.dp),
+        shape = RoundedCornerShape(22.dp),
         modifier = modifier.fillMaxWidth(),
+        shadowElevation = 6.dp,
     ) {
-        Row(
-            modifier = Modifier.padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        Column(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             if (inputExpanded) {
                 OutlinedTextField(
                     value = text,
                     onValueChange = { text = it },
-                    placeholder = { Text("输入", color = CoachPalette.TextHint) },
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(72.dp),
+                    placeholder = { Text("输入指令", color = CoachPalette.TextHint, fontSize = 14.sp) },
+                    modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 15.sp, lineHeight = 18.sp),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedTextColor = CoachPalette.TextPrimary,
                         unfocusedTextColor = CoachPalette.TextPrimary,
@@ -503,55 +503,108 @@ fun LiveVoiceControls(
                         unfocusedContainerColor = CoachPalette.InputBg,
                     ),
                 )
-                Button(
-                    enabled = text.isNotBlank() && !state.isAgentInFlight,
-                    onClick = {
-                        onSubmitText(text)
-                        text = ""
-                        inputExpanded = false
-                    },
-                    modifier = Modifier.height(72.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = CoachPalette.ActionListen,
-                        disabledContainerColor = CoachPalette.InputBg,
-                        disabledContentColor = CoachPalette.TextMuted,
-                    ),
-                ) {
-                    Text("发送", fontWeight = FontWeight.Bold)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        enabled = text.isNotBlank() && !state.isAgentInFlight,
+                        onClick = {
+                            onSubmitText(text)
+                            text = ""
+                            setExpanded(false)
+                        },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(40.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = CoachPalette.ActionListen,
+                            disabledContainerColor = CoachPalette.InputBg,
+                            disabledContentColor = CoachPalette.TextMuted,
+                        ),
+                    ) {
+                        Text("发送", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    }
+                    CoachOutlinedButton(
+                        text = "收起",
+                        onClick = { setExpanded(false) },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(40.dp),
+                    )
                 }
-                CoachOutlinedButton(
-                    text = "收起",
-                    onClick = { inputExpanded = false },
-                    modifier = Modifier.height(72.dp),
-                )
             } else {
-                Button(
-                    enabled = !state.isAgentInFlight || voice.active,
-                    onClick = {
-                        if (!hasMicPermission) {
-                            onRequestMicPermission()
-                        } else if (!voice.active) {
-                            onStartAudio()
-                        } else {
-                            onStopAudio()
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = primaryColor),
-                    shape = RoundedCornerShape(18.dp),
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(72.dp),
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    Text(voice.label, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                    Button(
+                        enabled = !state.isAgentInFlight || voice.active,
+                        onClick = {
+                            if (!hasMicPermission) {
+                                onRequestMicPermission()
+                            } else if (!voice.active) {
+                                onStartAudio()
+                            } else {
+                                onStopAudio()
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = primaryColor),
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(CoachLayoutMetrics.VoiceBarCollapsed),
+                    ) {
+                        Text(voice.label, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    }
+                    VoiceLevelDot(micState = state.micState, level = state.micLevel)
+                    CoachOutlinedButton(
+                        text = "输入",
+                        onClick = { setExpanded(true) },
+                        modifier = Modifier
+                            .widthIn(min = 64.dp)
+                            .height(CoachLayoutMetrics.VoiceBarCollapsed),
+                    )
                 }
-                VoiceLevelDot(micState = state.micState, level = state.micLevel)
-                CoachOutlinedButton(
-                    text = "输入",
-                    onClick = { inputExpanded = !inputExpanded },
-                    modifier = Modifier.height(72.dp),
-                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    EmergencyBarButton(
+                        text = "拨打 120",
+                        tint = CoachPalette.ActionEmergency,
+                        onClick = onDialEmergency,
+                        modifier = Modifier.weight(1f),
+                    )
+                    EmergencyBarButton(
+                        text = "结束急救",
+                        tint = CoachPalette.Outline,
+                        onClick = onStop,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun EmergencyBarButton(
+    text: String,
+    tint: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .height(CoachLayoutMetrics.VoiceBarEmergencyRow)
+            .clip(RoundedCornerShape(12.dp))
+            .background(tint.copy(alpha = 0.28f))
+            .clickable(onClick = onClick)
+            .defaultMinSize(minHeight = 40.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = text,
+            color = CoachPalette.TextPrimary,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
     }
 }
 
@@ -563,14 +616,15 @@ private fun CoachOutlinedButton(
 ) {
     OutlinedButton(
         onClick = onClick,
-        modifier = modifier,
-        shape = RoundedCornerShape(18.dp),
+        modifier = modifier.defaultMinSize(minWidth = 48.dp, minHeight = 40.dp),
+        shape = RoundedCornerShape(14.dp),
         border = BorderStroke(1.dp, CoachPalette.Outline),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
         colors = ButtonDefaults.outlinedButtonColors(
             contentColor = CoachPalette.TextSecondary,
         ),
     ) {
-        Text(text, fontWeight = FontWeight.SemiBold)
+        Text(text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -643,23 +697,23 @@ fun IdleStartBar(
         shape = RoundedCornerShape(26.dp),
         modifier = modifier.fillMaxWidth(),
     ) {
-        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
                 onClick = onStart,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(72.dp),
-                shape = RoundedCornerShape(18.dp),
+                    .height(56.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = CoachPalette.ActionStart),
             ) {
-                Text("开始急救", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                Text("开始急救", fontSize = 20.sp, fontWeight = FontWeight.Bold)
             }
             CoachOutlinedButton(
                 text = "立即拨打 120",
                 onClick = onDialEmergency,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(52.dp),
+                    .height(44.dp),
             )
         }
     }

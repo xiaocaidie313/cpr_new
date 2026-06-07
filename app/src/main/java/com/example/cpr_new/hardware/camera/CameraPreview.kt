@@ -84,6 +84,7 @@ fun CameraPreview(
 
         onDispose {
             runCatching { cameraProviderFuture.get().unbindAll() }
+            analysisExecutor.shutdown()
         }
     }
 
@@ -150,9 +151,7 @@ private fun bindUseCases(
 /**
  * 把一帧转成字节并交给第 3 部分。务必 close 以释放缓冲。
  *
- * 注意：这里用常见的 YUV_420_888 -> NV21 朴素打包（未逐行处理 rowStride），
- * 多数设备可用；正式联调时若第 3 部分发现色度错位，再按 stride 精化。
- * 像素格式通过 [FrameMeta.format] 明确告知接收方。
+ * 按 planes rowStride 正确转换；像素格式通过 [FrameMeta.format] 告知接收方。
  */
 private fun forwardFrame(proxy: ImageProxy, sessionId: String, sink: FrameSink) {
     runCatching {
@@ -170,22 +169,4 @@ private fun forwardFrame(proxy: ImageProxy, sessionId: String, sink: FrameSink) 
         )
     }
     proxy.close()
-}
-
-/** YUV_420_888 -> NV21 朴素打包。 */
-private fun ImageProxy.toNv21(): ByteArray {
-    val yBuffer = planes[0].buffer
-    val uBuffer = planes[1].buffer
-    val vBuffer = planes[2].buffer
-
-    val ySize = yBuffer.remaining()
-    val uSize = uBuffer.remaining()
-    val vSize = vBuffer.remaining()
-
-    val nv21 = ByteArray(ySize + uSize + vSize)
-    yBuffer.get(nv21, 0, ySize)
-    // NV21 顺序为 Y + V + U
-    vBuffer.get(nv21, ySize, vSize)
-    uBuffer.get(nv21, ySize + vSize, uSize)
-    return nv21
 }

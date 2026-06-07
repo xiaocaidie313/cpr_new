@@ -35,6 +35,7 @@ class LiveAudioPlayer {
     fun onAudioEnd(actionId: String? = null) {
         if (actionId != null && activeActionId != null && actionId != activeActionId) return
         activeActionId = null
+        releaseTrack()
     }
 
     fun onAudioCancel() {

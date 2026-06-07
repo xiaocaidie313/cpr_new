@@ -10,7 +10,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -19,8 +21,13 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -35,6 +42,7 @@ import com.example.cpr_new.hardware.camera.CameraPreview
 import com.example.cpr_new.ui.AttentionMode
 import com.example.cpr_new.ui.AttentionModeInputs
 import com.example.cpr_new.ui.CoachPalette
+import com.example.cpr_new.ui.coachContentPadding
 import com.example.cpr_new.ui.component.AgentTopStatusBar
 import com.example.cpr_new.ui.component.CoachAttentionLayout
 import com.example.cpr_new.ui.component.CprCoachOverlay
@@ -66,6 +74,7 @@ fun CprGuidanceScreen(
     onStopAudio: () -> Unit = {},
     onSubmitText: (String) -> Unit = {},
     onRequestMicPermission: () -> Unit = {},
+    onConfirmPendingTool: (Boolean) -> Unit = {},
     showQuickReplies: Boolean = false,
     hasMicPermission: Boolean = false,
     modifier: Modifier = Modifier,
@@ -97,16 +106,28 @@ fun CprGuidanceScreen(
             )
         }
 
-        if (state.isActive) {
+        if (state.isActive && state.incidentBanner != null) {
             StatusBanner(
                 incident = state.incidentBanner,
                 onDismissIncident = onDismissIncident,
-                modifier = Modifier.align(Alignment.TopCenter),
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .statusBarsPadding()
+                    .padding(top = 64.dp, start = 16.dp, end = 16.dp)
+                    .zIndex(12f),
             )
         }
 
         state.handoverReport?.let { report ->
             HandoverDialog(report = report, onDismiss = onDismissReport)
+        }
+
+        if (state.pendingConfirmTool != null) {
+            PendingConfirmDialog(
+                message = state.pendingConfirmMessage.orEmpty(),
+                onConfirm = { onConfirmPendingTool(true) },
+                onDismiss = { onConfirmPendingTool(false) },
+            )
         }
     }
 }
@@ -121,7 +142,9 @@ private fun IdleContent(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 24.dp, vertical = 24.dp),
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .padding(horizontal = 20.dp, vertical = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Spacer(Modifier.weight(0.6f))
@@ -225,6 +248,8 @@ private fun ActiveContent(
         agentStage = state.agentStage,
         visualOverlayMode = state.visualOverlayMode,
     ).toAttentionMode()
+    var inputExpanded by remember { mutableStateOf(false) }
+    val contentPadding = coachContentPadding(inputExpanded)
 
     Box(modifier = Modifier.fillMaxSize()) {
         CameraPreview(
@@ -244,22 +269,27 @@ private fun ActiveContent(
         when (attentionMode) {
             AttentionMode.Coach -> CoachAttentionLayout(
                 state = state,
+                contentPadding = contentPadding,
                 onPrimaryButton = onPrimaryButton,
             )
-            AttentionMode.EyesOff -> EyesOffAttentionLayout(state = state)
+            AttentionMode.EyesOff -> EyesOffAttentionLayout(
+                state = state,
+                contentPadding = contentPadding,
+            )
             AttentionMode.Glanceable -> GlanceableAttentionLayout(
                 state = state,
+                contentPadding = contentPadding,
                 onPrimaryButton = onPrimaryButton,
             )
         }
 
         AgentTopStatusBar(
             state = state,
-            onDialEmergency = onDialEmergency,
-            onStop = onStop,
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .padding(16.dp),
+                .statusBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .zIndex(10f),
         )
 
         LiveVoiceControls(
@@ -268,10 +298,15 @@ private fun ActiveContent(
             onStopAudio = onStopAudio,
             onSubmitText = onSubmitText,
             onRequestMicPermission = onRequestMicPermission,
+            onDialEmergency = onDialEmergency,
+            onStop = onStop,
             hasMicPermission = hasMicPermission,
+            onInputExpandedChanged = { inputExpanded = it },
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(16.dp),
+                .navigationBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .zIndex(10f),
         )
 
         if (showQuickReplies && BuildConfig.DEBUG) {
@@ -279,7 +314,8 @@ private fun ActiveContent(
                 onQuickReply = onQuickReply,
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
-                    .padding(end = 8.dp),
+                    .padding(end = 8.dp)
+                    .zIndex(5f),
             )
         }
     }
@@ -309,6 +345,37 @@ private fun DebugQuickReplyBar(onQuickReply: (String) -> Unit, modifier: Modifie
             }
         }
     }
+}
+
+@Composable
+private fun PendingConfirmDialog(
+    message: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = CoachPalette.CameraFrame,
+        titleContentColor = CoachPalette.TextPrimary,
+        textContentColor = CoachPalette.TextSecondary,
+        title = { Text("需要确认", fontWeight = FontWeight.Black) },
+        text = {
+            Text(
+                text = message.ifBlank { "Agent 请求执行一项需要授权的操作，是否继续？" },
+                fontSize = 15.sp,
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text("确认", color = Color(0xFF93C5FD), fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消", color = CoachPalette.TextMuted)
+            }
+        },
+    )
 }
 
 @Composable

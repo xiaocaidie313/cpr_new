@@ -87,6 +87,7 @@ class CprSessionViewModel(
     private var pendingTtsAudioSrc: String? = null
     private var liveCaptureStarted: Boolean = false
     private var micPermissionGranted: Boolean = false
+    private var sessionRecordingDesired: Boolean = false
     private var ttsFallbackJob: Job? = null
     private var serverAudioActionId: String? = null
 
@@ -121,7 +122,8 @@ class CprSessionViewModel(
         micPermissionGranted = micGranted
         startLiveCapture(micGranted)
         if (!useRemoteAgent) startMetronome()
-        startRecordingSafely()
+        sessionRecordingDesired = true
+        reconcileRecording()
         captureLocation()
         if (deps.tts.isUnavailable) {
             log(LogEntryType.INCIDENT, "系统 TTS 不可用，请到设置安装语音引擎")
@@ -151,6 +153,7 @@ class CprSessionViewModel(
         if (recording != null) log(LogEntryType.USER_ACTION, "已保存录音：${recording.name}")
 
         liveCaptureStarted = false
+        sessionRecordingDesired = false
         _state.value = _state.value.copy(
             isActive = false,
             metronomeRunning = false,
@@ -219,7 +222,11 @@ class CprSessionViewModel(
         val liveAgent = deps.agent as? LiveAgentCapable ?: return
         if (!liveAgent.isLiveConnected) {
             setMicState(MicState.Off)
+            reconcileRecording()
             return
+        }
+        if (deps.recorder.isRecording) {
+            runCatching { deps.recorder.stop() }
         }
         liveCaptureStarted = true
         deps.liveAudioCapture.start(
@@ -239,6 +246,7 @@ class CprSessionViewModel(
             },
         )
         setMicState(MicState.Listening)
+        reconcileRecording()
     }
 
     /** 权限授予或 WS 连上后补开 Live 麦克风。 */
@@ -258,6 +266,7 @@ class CprSessionViewModel(
         liveCaptureStarted = false
         deps.liveAudioCapture.stop()
         setMicState(MicState.Off)
+        reconcileRecording()
     }
 
     /** 文字输入提交（绕过 STT，对齐 first-aid 底栏「输入」）。 */
@@ -409,6 +418,9 @@ class CprSessionViewModel(
             ?.split("|")
             ?.filter { it.isNotBlank() }
             .orEmpty()
+        val pendingTool = action.metadata["pending_confirm_tools"]
+            ?.split(",")
+            ?.firstOrNull { it.isNotBlank() }
         _state.value = _state.value.copy(
             latestGuidance = action,
             phase = action.phase,
@@ -423,6 +435,10 @@ class CprSessionViewModel(
             visualOverlayMode = action.metadata["visual_overlay_mode"],
             correctionArrow = action.metadata["correction_arrow"],
             isAgentInFlight = false,
+            pendingConfirmTool = pendingTool,
+            pendingConfirmMessage = pendingTool?.let {
+                action.messageText.ifBlank { "需要你的确认才能继续" }
+            },
         )
         log(
             LogEntryType.GUIDANCE,
@@ -451,7 +467,10 @@ class CprSessionViewModel(
                 }
                 CopilotEmergencyTools.MOCK_CALL, CopilotEmergencyTools.REAL_CALL -> dialEmergency()
                 CopilotSystemTools.ATTACH_GPS -> captureLocation()
-                CopilotSystemTools.START_RECORDING -> startRecordingSafely()
+                CopilotSystemTools.START_RECORDING -> {
+                    sessionRecordingDesired = true
+                    reconcileRecording()
+                }
             }
         }
         if (toolTypes.isEmpty() && action.targetRate != null && action.phase == CprPhase.COMPRESSION) {
@@ -642,7 +661,56 @@ class CprSessionViewModel(
     fun dialEmergency() {
         val ok = deps.dialer.dial()
         log(LogEntryType.USER_ACTION, if (ok) "已唤起 120 拨号" else "唤起拨号失败")
-        if (!ok) raiseIncident("无法唤起拨号，请手动拨打 120")
+        if (ok) {
+            deps.deviceState.emergencyCallStarted = true
+            publishDeviceStateUpdate()
+        } else {
+            raiseIncident("无法唤起拨号，请手动拨打 120")
+        }
+    }
+
+    /** 用户确认/拒绝 Agent 待授权工具（如分享视频）。 */
+    fun confirmPendingTool(confirmed: Boolean) {
+        val tool = _state.value.pendingConfirmTool ?: return
+        _state.value = _state.value.copy(
+            pendingConfirmTool = null,
+            pendingConfirmMessage = null,
+            isAgentInFlight = true,
+        )
+        viewModelScope.launch {
+            val guidance = runCatching {
+                deps.agent.submitToolResult(sessionId, tool, confirmed)
+            }.getOrNull()
+            if (guidance != null) {
+                applyGuidance(guidance)
+            } else {
+                _state.value = _state.value.copy(isAgentInFlight = false)
+                raiseIncident(if (confirmed) "Agent 未响应工具确认" else "已取消操作")
+            }
+        }
+    }
+
+    /**
+     * 协调留证录音与 Live 语音采集：二者不能同时占用麦克风。
+     * Live 采集优先；关闭 Live 后若会话仍需留证则恢复录音。
+     */
+    private fun reconcileRecording() {
+        if (!_state.value.isActive || !sessionRecordingDesired) return
+        val liveActive = useRemoteAgent && liveCaptureStarted
+        if (liveActive) {
+            if (deps.recorder.isRecording) runCatching { deps.recorder.stop() }
+            return
+        }
+        if (!deps.recorder.isRecording) startRecordingSafely()
+    }
+
+    private fun publishDeviceStateUpdate() {
+        if (!useRemoteAgent) return
+        viewModelScope.launch {
+            runCatching { deps.agent.publishDeviceState(sessionId) }
+                .getOrNull()
+                ?.let { applyGuidance(it) }
+        }
     }
 
     private fun startRecordingSafely() {

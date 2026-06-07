@@ -40,13 +40,14 @@ data class TurnRequest(
 fun sessionStartedRequest(sessionId: String, deviceState: Map<String, Any?>): TurnRequest =
     TurnRequest(
         sessionId = sessionId,
-        eventSource = "demo_script",
+        eventSource = "device",
         eventType = "session_started",
         deviceState = deviceState,
         metadata = mapOf(
             "adult_likely" to true,
             "recording" to true,
             "scene_note" to "cpr_new_android",
+            "client" to "cpr_new_android",
         ),
     )
 

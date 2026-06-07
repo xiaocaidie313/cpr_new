@@ -1,5 +1,7 @@
 package com.example.cpr_new.agent.copilot
 
+import android.os.Handler
+import android.os.Looper
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.channels.BufferOverflow
@@ -28,18 +30,25 @@ class WebSocketAgentChannel(
     private val _connected = AtomicBoolean(false)
     val isConnected: Boolean get() = _connected.get()
 
+    private val reconnectHandler = Handler(Looper.getMainLooper())
     private var socket: WebSocket? = null
     private var sessionId: String = ""
     private var mode: String = "demo_assisted"
+    private var userClosed = false
+    private var reconnectAttempts = 0
+    private var lastContextRequest: TurnRequest? = null
 
     fun connect(sessionId: String, mode: String = "demo_assisted") {
         this.sessionId = sessionId
         this.mode = mode
-        close()
-        socket = client.newWebSocket(Request.Builder().url(wsUrl).build(), Listener())
+        userClosed = false
+        reconnectAttempts = 0
+        reconnectHandler.removeCallbacksAndMessages(null)
+        openSocket()
     }
 
     fun updateContext(request: TurnRequest) {
+        lastContextRequest = request
         sendJson(
             JSONObject()
                 .put("type", "context")
@@ -75,9 +84,30 @@ class WebSocketAgentChannel(
     fun reset() = sendJson(JSONObject().put("type", "reset"))
 
     fun close() {
+        userClosed = true
+        reconnectHandler.removeCallbacksAndMessages(null)
         _connected.set(false)
         socket?.close(1000, "client closing")
         socket = null
+    }
+
+    private fun openSocket() {
+        socket?.close(1000, "reconnect")
+        socket = client.newWebSocket(Request.Builder().url(wsUrl).build(), Listener())
+    }
+
+    private fun scheduleReconnect() {
+        if (userClosed || sessionId.isBlank()) return
+        val delayMs = minOf(30_000L, 1_000L shl reconnectAttempts.coerceAtMost(5))
+        reconnectAttempts++
+        reconnectHandler.postDelayed(
+            {
+                if (!userClosed && sessionId.isNotBlank()) {
+                    openSocket()
+                }
+            },
+            delayMs,
+        )
     }
 
     private fun sendStart() {
@@ -87,6 +117,7 @@ class WebSocketAgentChannel(
                 .put("sessionId", sessionId)
                 .put("mode", mode),
         )
+        lastContextRequest?.let { updateContext(it) }
     }
 
     private fun sendJson(json: JSONObject) {
@@ -104,6 +135,7 @@ class WebSocketAgentChannel(
     private inner class Listener : WebSocketListener() {
         override fun onOpen(webSocket: WebSocket, response: Response) {
             _connected.set(true)
+            reconnectAttempts = 0
             emit(LiveAgentEvent.ConnectionChanged(connected = true))
             sendStart()
         }
@@ -120,12 +152,14 @@ class WebSocketAgentChannel(
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
             _connected.set(false)
             emit(LiveAgentEvent.ConnectionChanged(connected = false, message = reason.takeIf { it.isNotBlank() }))
+            if (!userClosed) scheduleReconnect()
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
             _connected.set(false)
             emit(LiveAgentEvent.ConnectionChanged(connected = false, message = t.message))
             emit(LiveAgentEvent.Error(t.message ?: "WebSocket 连接失败"))
+            if (!userClosed) scheduleReconnect()
         }
     }
 

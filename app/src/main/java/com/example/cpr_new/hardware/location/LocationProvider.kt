@@ -10,6 +10,7 @@ import androidx.core.content.ContextCompat
 import com.example.cpr_new.core.contract.GeoSnapshot
 import kotlin.coroutines.resume
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * 定位提供者 —— 硬件适配层。
@@ -67,19 +68,21 @@ class LocationProvider(context: Context) {
             // 旧系统直接回退到最后已知位置，避免引入复杂的 listener 兼容代码。
             return lastKnown()
         }
-        return runCatching {
-            suspendCancellableCoroutine<GeoSnapshot?> { cont ->
-                val cancellation = android.os.CancellationSignal()
-                cont.invokeOnCancellation { runCatching { cancellation.cancel() } }
-                lm.getCurrentLocation(
-                    LocationManager.GPS_PROVIDER,
-                    cancellation,
-                    appContext.mainExecutor,
-                ) { location ->
-                    if (cont.isActive) cont.resume(location?.toSnapshot() ?: lastKnown())
+        return withTimeoutOrNull(timeoutMs) {
+            runCatching {
+                suspendCancellableCoroutine<GeoSnapshot?> { cont ->
+                    val cancellation = android.os.CancellationSignal()
+                    cont.invokeOnCancellation { runCatching { cancellation.cancel() } }
+                    lm.getCurrentLocation(
+                        LocationManager.GPS_PROVIDER,
+                        cancellation,
+                        appContext.mainExecutor,
+                    ) { location ->
+                        if (cont.isActive) cont.resume(location?.toSnapshot() ?: lastKnown())
+                    }
                 }
-            }
-        }.getOrElse { lastKnown() }
+            }.getOrElse { lastKnown() }
+        } ?: lastKnown()
     }
 
     private fun Location.toSnapshot(): GeoSnapshot = GeoSnapshot(

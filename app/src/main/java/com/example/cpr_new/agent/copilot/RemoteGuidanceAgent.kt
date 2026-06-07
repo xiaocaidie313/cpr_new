@@ -1,6 +1,5 @@
 package com.example.cpr_new.agent.copilot
 
-import android.content.Context
 import com.example.cpr_new.BuildConfig
 import com.example.cpr_new.core.contract.CprPhase
 import com.example.cpr_new.core.contract.GuidanceAction
@@ -9,6 +8,7 @@ import com.example.cpr_new.core.contract.GuidancePriority
 import com.example.cpr_new.core.contract.HandoverReport
 import com.example.cpr_new.core.contract.PerceptionEvent
 import com.example.cpr_new.core.contract.SessionLog
+import com.example.cpr_new.hardware.device.DeviceStateProvider
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.sync.Mutex
@@ -21,7 +21,8 @@ import kotlinx.coroutines.sync.withLock
  * - WS `/ws/live`：流式 guidance、服务端 TTS 音频、阶段状态
  */
 class RemoteGuidanceAgent(
-    @Suppress("UNUSED_PARAMETER") context: Context,
+    @Suppress("UNUSED_PARAMETER") context: android.content.Context,
+    private val deviceStateProvider: DeviceStateProvider,
     private val transport: AgentTransport = HttpAgentTransport(BuildConfig.COPILOT_BASE_URL),
     private val wsChannel: WebSocketAgentChannel = WebSocketAgentChannel(BuildConfig.COPILOT_WS_URL),
 ) : GuidanceAgent, LiveAgentCapable {
@@ -86,8 +87,7 @@ class RemoteGuidanceAgent(
             )
         }
 
-        val deviceState = defaultDeviceState()
-        val request = sessionStartedRequest(sessionId, deviceState)
+        val request = sessionStartedRequest(sessionId, deviceStateProvider.snapshot())
         wsChannel.updateContext(request)
         return postTurn(request) ?: offlineFallback(sessionId, "Agent 未返回启动指导")
     }
@@ -103,7 +103,7 @@ class RemoteGuidanceAgent(
             val request = PerceptionEventMapper.toCprQualityTurn(
                 sessionId = sessionId,
                 event = event,
-                deviceState = defaultDeviceState(),
+                deviceState = deviceStateProvider.snapshot(),
             )
             postTurn(request)?.let { emit(it) }
         }
@@ -127,7 +127,38 @@ class RemoteGuidanceAgent(
             text = text,
             eventSource = "ui",
             eventType = "user_response",
-            deviceState = defaultDeviceState(),
+            deviceState = deviceStateProvider.snapshot(),
+        )
+        return postTurn(request)
+    }
+
+    override suspend fun publishDeviceState(sessionId: String): GuidanceAction? {
+        this.sessionId = sessionId
+        val request = TurnRequest(
+            sessionId = sessionId,
+            eventSource = "device",
+            eventType = "device_state_update",
+            deviceState = deviceStateProvider.snapshot(),
+        )
+        return postTurn(request)
+    }
+
+    override suspend fun submitToolResult(
+        sessionId: String,
+        toolType: String,
+        confirmed: Boolean,
+    ): GuidanceAction? {
+        this.sessionId = sessionId
+        val request = TurnRequest(
+            sessionId = sessionId,
+            eventSource = "device",
+            eventType = "tool_result",
+            deviceState = deviceStateProvider.snapshot(),
+            toolResult = mapOf(
+                "type" to toolType,
+                "status" to if (confirmed) "ok" else "cancelled",
+                "confirmed" to confirmed,
+            ),
         )
         return postTurn(request)
     }
@@ -137,7 +168,7 @@ class RemoteGuidanceAgent(
             sessionId = log.sessionId,
             eventType = "handover_requested",
             eventSource = "device",
-            deviceState = defaultDeviceState(),
+            deviceState = deviceStateProvider.snapshot(),
         )
         val guidance = postTurn(request)
         val narrative = guidance?.messageText?.takeIf { it.isNotBlank() }
@@ -221,16 +252,6 @@ class RemoteGuidanceAgent(
                 "tool_types" to CopilotHapticTools.UPDATE,
                 "copilot_stage" to (currentStage ?: "S7_CPR_LOOP"),
             ),
-        )
-
-    private fun defaultDeviceState(): Map<String, Any?> =
-        mapOf(
-            "camera_available" to true,
-            "mic_available" to true,
-            "gps_available" to true,
-            "recording" to true,
-            "emergency_call_started" to false,
-            "network" to "offline",
         )
 
     companion object {
