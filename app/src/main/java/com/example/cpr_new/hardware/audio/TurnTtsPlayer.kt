@@ -19,6 +19,7 @@ class TurnTtsPlayer(
     private val baseUrl: String,
 ) {
     var onSpeakingChanged: (Boolean) -> Unit = {}
+    var onPlaybackFailed: (() -> Unit)? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val client = OkHttpClient()
     private var player: MediaPlayer? = null
@@ -43,6 +44,7 @@ class TurnTtsPlayer(
                 mediaPlayer.start()
             }.onFailure {
                 onSpeakingChanged.invoke(false)
+                onPlaybackFailed?.invoke()
             }
         }
     }

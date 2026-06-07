@@ -5,7 +5,7 @@ import com.example.cpr_new.feature.session.MicState
 
 fun stageStatusLabel(agentStage: String?): String =
     when {
-        agentStage.isNullOrBlank() -> "待命"
+        agentStage.isNullOrBlank() || agentStage == "S0_INIT" -> "待命"
         agentStage.startsWith("S1") -> "安全"
         agentStage.startsWith("S2") -> "反应"
         agentStage.startsWith("S3") -> "呼吸"
@@ -30,10 +30,77 @@ fun connectionChip(agentConnected: Boolean, liveWsConnected: Boolean): Pair<Stri
 fun primaryGuidanceText(messageText: String, agentStage: String?): String =
     when {
         messageText.isNotBlank() -> messageText
-        agentStage.isNullOrBlank() -> "准备急救"
+        agentStage.isNullOrBlank() || agentStage == "S0_INIT" -> "准备急救"
         agentStage.startsWith("S7") -> "继续按压"
         else -> "听语音指引"
     }
+
+fun compactSecondaryText(secondaryText: String, statusTags: List<String>): String? =
+    secondaryText.takeIf { it.isNotBlank() } ?: statusTags.firstOrNull { it.isNotBlank() }
+
+enum class QualityScoreTone {
+    Good,
+    Steady,
+    Adjust,
+    Pending,
+}
+
+data class QualityScorePresentation(
+    val valueText: String,
+    val labelText: String,
+    val tone: QualityScoreTone,
+)
+
+fun qualityScorePresentation(score: Int, agentStage: String?): QualityScorePresentation? {
+    val isQualityStage = agentStage?.startsWith("S6") == true ||
+        agentStage?.startsWith("S7") == true ||
+        agentStage?.startsWith("S8") == true
+    if (score <= 0 && !isQualityStage) return null
+
+    if (score <= 0) {
+        return QualityScorePresentation(
+            valueText = "检测中",
+            labelText = "",
+            tone = QualityScoreTone.Pending,
+        )
+    }
+
+    val normalized = score.coerceIn(0, 100)
+    val (label, tone) = when {
+        normalized >= 80 -> "好" to QualityScoreTone.Good
+        normalized >= 60 -> "稳" to QualityScoreTone.Steady
+        else -> "调" to QualityScoreTone.Adjust
+    }
+    return QualityScorePresentation(
+        valueText = normalized.toString(),
+        labelText = label,
+        tone = tone,
+    )
+}
+
+fun QualityScoreTone.toColor(): Color = when (this) {
+    QualityScoreTone.Good -> Color(0xFF22C55E)
+    QualityScoreTone.Steady -> Color(0xFFF59E0B)
+    QualityScoreTone.Adjust -> Color(0xFFEF4444)
+    QualityScoreTone.Pending -> Color(0xFF38BDF8)
+}
+
+data class VoiceControlPresentation(
+    val label: String,
+    val flowStarted: Boolean,
+    val active: Boolean,
+)
+
+fun voiceControlPresentation(micState: MicState, agentStage: String?): VoiceControlPresentation {
+    val flowStarted = !agentStage.isNullOrBlank() && agentStage != "S0_INIT"
+    val active = micState in activeMicStates
+    val label = when {
+        !flowStarted -> "开始"
+        active -> "停"
+        else -> "听"
+    }
+    return VoiceControlPresentation(label = label, flowStarted = flowStarted, active = active)
+}
 
 fun micIndicatorColor(micState: MicState): Color = when (micState) {
     MicState.Speaking -> Color(0xFFA78BFA)
@@ -42,3 +109,9 @@ fun micIndicatorColor(micState: MicState): Color = when (micState) {
     MicState.Off -> Color(0xFF64748B)
     MicState.Idle -> Color(0xFF334155)
 }
+
+private val activeMicStates = setOf(
+    MicState.Listening,
+    MicState.Capturing,
+    MicState.Speaking,
+)

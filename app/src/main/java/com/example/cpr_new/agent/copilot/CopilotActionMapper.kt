@@ -33,7 +33,7 @@ object CopilotActionMapper {
             priority = mapPriority(copilot.priority),
             messageCode = mapMessageCode(copilot),
             messageText = copilot.ui.displayText.ifBlank { copilot.tts.text },
-            ttsText = copilot.tts.text,
+            ttsText = copilot.tts.text.ifBlank { copilot.ui.displayText },
             hapticPattern = null,
             sourceEventId = "",
             phase = mapStageToPhase(copilot.stage),

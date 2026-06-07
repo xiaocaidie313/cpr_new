@@ -9,8 +9,15 @@ import androidx.camera.core.UseCase
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -19,6 +26,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
@@ -82,14 +90,24 @@ fun CameraPreview(
     AndroidView(factory = { previewView }, modifier = modifier)
 }
 
-/** 占位视图：无权限 / 相机不可用时展示，避免黑屏与误解。 */
+/** 占位视图：无权限 / 相机不可用时展示，对齐 first-aid MockCameraFallback。 */
 @Composable
 private fun CameraPlaceholder(text: String, modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier.background(Color(0xFF101216)),
-        contentAlignment = Alignment.Center,
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(com.example.cpr_new.ui.CoachPalette.CameraFallback),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
     ) {
-        Text(text = text, color = Color(0xFF8A9099), fontSize = 13.sp)
+        Box(
+            modifier = Modifier
+                .size(width = 220.dp, height = 320.dp)
+                .background(com.example.cpr_new.ui.CoachPalette.CameraFrame, RoundedCornerShape(120.dp))
+                .border(2.dp, com.example.cpr_new.ui.CoachPalette.CameraBorder, RoundedCornerShape(120.dp)),
+        )
+        Spacer(Modifier.height(18.dp))
+        Text(text = text, color = com.example.cpr_new.ui.CoachPalette.TextSecondary, fontSize = 14.sp)
     }
 }
 

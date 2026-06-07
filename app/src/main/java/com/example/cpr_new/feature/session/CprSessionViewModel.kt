@@ -26,6 +26,8 @@ import com.example.cpr_new.core.contract.SessionLog
 import com.example.cpr_new.core.contract.SessionLogEntry
 import com.example.cpr_new.core.di.CprDependencies
 import com.example.cpr_new.hardware.audio.AudioMetronomeController
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -85,6 +87,8 @@ class CprSessionViewModel(
     private var pendingTtsAudioSrc: String? = null
     private var liveCaptureStarted: Boolean = false
     private var micPermissionGranted: Boolean = false
+    private var ttsFallbackJob: Job? = null
+    private var serverAudioActionId: String? = null
 
     init {
         observeMetronome()
@@ -119,6 +123,9 @@ class CprSessionViewModel(
         if (!useRemoteAgent) startMetronome()
         startRecordingSafely()
         captureLocation()
+        if (deps.tts.isUnavailable) {
+            log(LogEntryType.INCIDENT, "系统 TTS 不可用，请到设置安装语音引擎")
+        }
         emitFirstGuidance()
     }
 
@@ -328,6 +335,10 @@ class CprSessionViewModel(
                 log(LogEntryType.USER_ACTION, "识别：${event.text}")
             }
             is LiveAgentEvent.AudioBegin -> {
+                ttsFallbackJob?.cancel()
+                serverAudioActionId = event.actionId
+                deps.tts.stop()
+                deps.turnTtsPlayer.stop()
                 setAgentSpeaking(true)
                 deps.liveAudioPlayer.onAudioBegin(
                     sampleRate = event.sampleRate,
@@ -382,24 +393,12 @@ class CprSessionViewModel(
             )
         }
 
-        val resolvedAudioSrc = ttsAudioSrc ?: action.metadata["tts_audio_src"]
-        val suppress = suppressLocalTts || action.metadata["suppress_local_tts"] == "true"
-        pendingTtsActionId = action.actionId
-        pendingTtsText = action.ttsText
-        pendingTtsAudioSrc = resolvedAudioSrc
-
-        when {
-            suppress && preferServerTts -> Unit
-            preferServerTts && !suppress && action.shouldUseLocalLiveTts() -> {
-                speakLocalTts(action)
-            }
-            !preferServerTts && !resolvedAudioSrc.isNullOrBlank() -> {
-                deps.turnTtsPlayer.play(resolvedAudioSrc)
-            }
-            action.ttsText.isNotBlank() && (!preferServerTts || !suppress) -> {
-                speakLocalTts(action)
-            }
-        }
+        playGuidanceSpeech(
+            action = action,
+            preferServerTts = preferServerTts,
+            suppressLocalTts = suppressLocalTts || action.metadata["suppress_local_tts"] == "true",
+            ttsAudioSrc = ttsAudioSrc ?: action.metadata["tts_audio_src"],
+        )
         if (!useRemoteAgent) {
             action.hapticPattern?.let { deps.haptics.play(it) }
         }
@@ -481,6 +480,11 @@ class CprSessionViewModel(
 
     private fun setupSpeakingCallbacks() {
         deps.turnTtsPlayer.onSpeakingChanged = { speaking -> setAgentSpeaking(speaking) }
+        deps.turnTtsPlayer.onPlaybackFailed = {
+            if (pendingTtsText.isNotBlank()) {
+                deps.tts.speak(pendingTtsText, interrupt = false)
+            }
+        }
     }
 
     private fun setAgentSpeaking(speaking: Boolean) {
@@ -505,6 +509,7 @@ class CprSessionViewModel(
 
     private fun playPendingTtsFallback(actionId: String?) {
         if (actionId != null && pendingTtsActionId != null && actionId != pendingTtsActionId) return
+        if (serverAudioActionId == actionId) return
         val audioSrc = pendingTtsAudioSrc
         when {
             !audioSrc.isNullOrBlank() -> deps.turnTtsPlayer.play(audioSrc)
@@ -512,9 +517,48 @@ class CprSessionViewModel(
         }
     }
 
-    private fun speakLocalTts(action: GuidanceAction) {
-        if (action.ttsText.isBlank()) return
-        deps.tts.speak(action.ttsText, interrupt = action.priority == GuidancePriority.CRITICAL)
+    private fun guidanceSpeechText(action: GuidanceAction): String =
+        action.ttsText.takeIf { it.isNotBlank() } ?: action.messageText
+
+    private fun playGuidanceSpeech(
+        action: GuidanceAction,
+        preferServerTts: Boolean,
+        suppressLocalTts: Boolean,
+        ttsAudioSrc: String?,
+    ) {
+        val speechText = guidanceSpeechText(action)
+        pendingTtsActionId = action.actionId
+        pendingTtsText = speechText
+        pendingTtsAudioSrc = ttsAudioSrc
+        ttsFallbackJob?.cancel()
+        serverAudioActionId = null
+
+        if (!ttsAudioSrc.isNullOrBlank()) {
+            deps.turnTtsPlayer.play(ttsAudioSrc)
+        }
+
+        if (speechText.isBlank()) return
+
+        when {
+            suppressLocalTts && preferServerTts -> scheduleLocalTtsFallback(action.actionId, speechText)
+            preferServerTts && action.shouldUseLocalLiveTts() -> speakLocalTts(speechText, action.priority)
+            !preferServerTts && ttsAudioSrc.isNullOrBlank() -> speakLocalTts(speechText, action.priority)
+            !preferServerTts && !ttsAudioSrc.isNullOrBlank() -> scheduleLocalTtsFallback(action.actionId, speechText)
+            else -> speakLocalTts(speechText, action.priority)
+        }
+    }
+
+    private fun scheduleLocalTtsFallback(actionId: String, speechText: String) {
+        ttsFallbackJob = viewModelScope.launch {
+            delay(SERVER_TTS_FALLBACK_MS)
+            if (serverAudioActionId == actionId) return@launch
+            speakLocalTts(speechText, GuidancePriority.MEDIUM)
+        }
+    }
+
+    private fun speakLocalTts(text: String, priority: GuidancePriority) {
+        if (text.isBlank()) return
+        deps.tts.speak(text, interrupt = priority == GuidancePriority.CRITICAL)
     }
 
     /** 模拟语音输入（联调常用短语，走与主按钮相同的 Agent 回合）。 */
@@ -702,6 +746,7 @@ class CprSessionViewModel(
      */
     companion object {
         private const val ACTION_DEDUPE_MS = 800L
+        private const val SERVER_TTS_FALLBACK_MS = 1_200L
 
         fun factory(deps: CprDependencies): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {

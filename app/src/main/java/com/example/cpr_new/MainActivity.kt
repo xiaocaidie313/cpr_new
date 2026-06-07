@@ -5,8 +5,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -36,9 +34,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             Cpr_newTheme {
-                Scaffold(modifier = Modifier.fillMaxSize()) { _ ->
-                    CprApp(modifier = Modifier.fillMaxSize())
-                }
+                CprApp(modifier = Modifier.fillMaxSize())
             }
         }
     }
@@ -76,9 +72,16 @@ private fun CprApp(modifier: Modifier = Modifier) {
         onDismissReport = viewModel::dismissReport,
         onPrimaryButton = viewModel::onPrimaryButtonClick,
         onQuickReply = viewModel::onQuickReply,
+        onStartAudio = viewModel::startLiveAudio,
+        onStopAudio = viewModel::stopLiveAudio,
+        onSubmitText = viewModel::submitTextInput,
+        onRequestMicPermission = {
+            if (!permissions.snapshot.isGranted(RECORD_AUDIO)) permissions.request()
+            viewModel.enableLiveCapture(micGranted = permissions.snapshot.isGranted(RECORD_AUDIO))
+        },
         showQuickReplies = ServiceLocator.agentBackend == AgentBackend.REMOTE_COPILOT,
+        hasMicPermission = micGranted,
         modifier = modifier,
-        // 相机权限授予后翻转，CameraPreview 会自动绑定并显示预览。
         cameraGranted = permissions.snapshot.isGranted(CprPermissions.CAMERA),
         frameSink = viewModel.frameSink,
     )
