@@ -47,6 +47,14 @@ object CopilotActionMapper {
                 if (toolTypes.isNotBlank()) put("tool_types", toolTypes)
                 if (pendingConfirm.isNotBlank()) put("pending_confirm_tools", pendingConfirm)
                 copilot.ui.qualityScore?.let { put("quality_score", it.toString()) }
+                copilot.ui.secondaryText.takeIf { it.isNotBlank() }?.let { put("secondary_text", it) }
+                if (copilot.ui.statusTags.isNotEmpty()) {
+                    put("status_tags", copilot.ui.statusTags.joinToString("|"))
+                }
+                copilot.visualOverlay?.get("mode")?.toString()?.takeIf { it.isNotBlank() }
+                    ?.let { put("visual_overlay_mode", it) }
+                copilot.visualOverlay?.get("correction_arrow")?.toString()?.takeIf { it.isNotBlank() }
+                    ?.let { put("correction_arrow", it) }
                 ttsAudioSrc?.takeIf { it.isNotBlank() }?.let { put("tts_audio_src", it) }
                 if (suppressLocalTts) put("suppress_local_tts", "true")
                 responseType?.takeIf { it.isNotBlank() }?.let { put("response_type", it) }

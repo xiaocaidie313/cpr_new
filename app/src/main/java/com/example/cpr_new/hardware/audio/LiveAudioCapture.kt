@@ -33,10 +33,12 @@ class LiveAudioCapture {
         onPcmChunk: (ByteArray) -> Unit,
         onBargeIn: () -> Unit,
         onError: (String) -> Unit,
+        onLevel: ((Float) -> Unit)? = null,
+        onUtteranceEnd: (() -> Unit)? = null,
     ) {
         if (!running.compareAndSet(false, true)) return
         scope.launch {
-            runCatching { captureLoop(onPcmChunk, onBargeIn) }
+            runCatching { captureLoop(onPcmChunk, onBargeIn, onLevel, onUtteranceEnd) }
                 .onFailure {
                     running.set(false)
                     onError(it.message ?: "麦克风采集失败")
@@ -65,6 +67,8 @@ class LiveAudioCapture {
     private fun captureLoop(
         onPcmChunk: (ByteArray) -> Unit,
         onBargeIn: () -> Unit,
+        onLevel: ((Float) -> Unit)?,
+        onUtteranceEnd: (() -> Unit)?,
     ) {
         val minBuffer = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, PCM_FORMAT)
             .coerceAtLeast(FRAME_SAMPLES * BYTES_PER_SAMPLE * 4)
@@ -99,9 +103,10 @@ class LiveAudioCapture {
 
                 val frameMs = (count * 1000 / SAMPLE_RATE).coerceAtLeast(1)
                 val framePcm = readBuffer.toPcmBytes(count)
+                val rms = readBuffer.rms(count)
+                onLevel?.invoke(rms.coerceIn(0f, 0.25f) / 0.25f)
 
                 if (ttsSpeaking.get()) {
-                    val rms = readBuffer.rms(count)
                     if (rms >= BARGE_IN_RMS) {
                         bargeInVoicedMs += frameMs
                         if (!bargeInSent && bargeInVoicedMs >= BARGE_IN_SPEECH_MS) {
@@ -117,7 +122,7 @@ class LiveAudioCapture {
                 bargeInVoicedMs = 0
                 onPcmChunk(framePcm)
 
-                val speech = readBuffer.rms(count) >= LISTENING_RMS
+                val speech = rms >= LISTENING_RMS
                 if (speech) {
                     silenceMs = 0
                     voicedMs += frameMs
@@ -133,6 +138,7 @@ class LiveAudioCapture {
                     silenceMs = 0
                     voicedMs = 0
                     bargeInSent = false
+                    onUtteranceEnd?.invoke()
                 }
             }
         } finally {

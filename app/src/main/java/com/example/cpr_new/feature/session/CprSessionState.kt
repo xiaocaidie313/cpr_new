@@ -46,10 +46,25 @@ data class CprSessionState(
     /** WS /ws/live 是否已连接（语音流式 TTS/STT）。 */
     val liveWsConnected: Boolean = false,
 
-    /** Live 麦克风是否在向 WS 送 PCM。 */
-    val micListening: Boolean = false,
+    /** 麦克风/语音通道状态（对齐 first-aid MicState）。 */
+    val micState: MicState = MicState.Idle,
     /** 流式 STT 中间结果（字幕）。 */
     val partialTranscript: String = "",
+    /** 最近一次用户语音识别最终结果。 */
+    val lastUserTranscript: String? = null,
+    /** 麦克风音量 0~1，用于电平指示。 */
+    val micLevel: Float = 0f,
+
+    /** Agent UI 副文案（对齐 Copilot secondary_text）。 */
+    val secondaryText: String = "",
+    /** Agent UI 状态标签（对齐 Copilot status_tags）。 */
+    val statusTags: List<String> = emptyList(),
+    /** 视觉叠层模式（手位/频率/AED 等 Canvas 反馈）。 */
+    val visualOverlayMode: String? = null,
+    /** 校正箭头方向（left/right/up/down）。 */
+    val correctionArrow: String? = null,
+    /** Agent 回合处理中（禁用重复提交）。 */
+    val isAgentInFlight: Boolean = false,
 
     /** 当前置顶的兜底/告警提示（断网、权限、识别失败等），null 表示无。 */
     val incidentBanner: String? = null,

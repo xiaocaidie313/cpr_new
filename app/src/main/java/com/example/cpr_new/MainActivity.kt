@@ -36,8 +36,8 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             Cpr_newTheme {
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    CprApp(modifier = Modifier.padding(innerPadding))
+                Scaffold(modifier = Modifier.fillMaxSize()) { _ ->
+                    CprApp(modifier = Modifier.fillMaxSize())
                 }
             }
         }
@@ -60,7 +60,7 @@ private fun CprApp(modifier: Modifier = Modifier) {
     val micGranted = permissions.snapshot.isGranted(RECORD_AUDIO)
 
     LaunchedEffect(micGranted, state.isActive) {
-        if (micGranted && state.isActive) viewModel.enableLiveCapture()
+        if (micGranted && state.isActive) viewModel.enableLiveCapture(micGranted = true)
     }
 
     CprGuidanceScreen(

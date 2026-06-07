@@ -13,6 +13,7 @@ interface LiveAgentCapable {
     fun sendTurn(request: TurnRequest)
     fun sendPcm(pcm16: ByteArray)
     fun sendBargeIn()
+    fun commitAudio()
 }
 
 sealed interface LiveAgentEvent {

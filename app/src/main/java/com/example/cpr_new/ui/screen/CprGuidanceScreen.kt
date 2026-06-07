@@ -46,12 +46,15 @@ import com.example.cpr_new.core.contract.GuidancePriority
 import com.example.cpr_new.core.contract.HandoverReport
 import com.example.cpr_new.feature.session.CprSessionState
 import com.example.cpr_new.hardware.camera.CameraPreview
+import com.example.cpr_new.ui.CoachPalette
 import com.example.cpr_new.ui.EmergencyPalette
-import com.example.cpr_new.ui.component.GuidanceCard
+import com.example.cpr_new.ui.component.AgentFlowRail
+import com.example.cpr_new.ui.component.AgentTopStatusBar
+import com.example.cpr_new.ui.component.CoachBottomBar
+import com.example.cpr_new.ui.component.CoachGuidancePanel
 import com.example.cpr_new.ui.component.MetronomeIndicator
-import com.example.cpr_new.ui.component.PhaseStepper
-import com.example.cpr_new.ui.component.QualityDashboard
 import com.example.cpr_new.ui.component.StatusBanner
+import com.example.cpr_new.ui.component.VoiceStatusChip
 
 /**
  * 急救指导主界面 —— 急救 UI 顶层。
@@ -74,16 +77,18 @@ fun CprGuidanceScreen(
     cameraGranted: Boolean = false,
     frameSink: FrameSink? = null,
 ) {
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(
+    val rootModifier = modifier.fillMaxSize().then(
+        if (state.isActive) {
+            Modifier.background(CoachPalette.Background)
+        } else {
+            Modifier.background(
                 Brush.verticalGradient(
                     listOf(EmergencyPalette.BackgroundTop, EmergencyPalette.BackgroundBottom),
                 ),
-            )
-            .padding(horizontal = 16.dp, vertical = 16.dp),
-    ) {
+            ).padding(horizontal = 16.dp, vertical = 16.dp)
+        },
+    )
+    Box(modifier = rootModifier) {
         if (!state.isActive) {
             IdleContent(state = state, onStart = onStart, onDialEmergency = onDialEmergency)
         } else {
@@ -250,7 +255,7 @@ private fun StepRow(index: String, text: String) {
     }
 }
 
-/** 进行态：阶段步进 + 告警 + 大字指导 + 节拍器 + 仪表盘 + 操作区。 */
+/** 进行态：仿 first-aid 全屏相机 + 半透明教练层。 */
 @Composable
 private fun ActiveContent(
     state: CprSessionState,
@@ -262,123 +267,82 @@ private fun ActiveContent(
     cameraGranted: Boolean,
     frameSink: FrameSink?,
 ) {
-    Column(modifier = Modifier.fillMaxSize()) {
-        // 中间内容可滚动：内容超高时滚动，避免把底部操作栏挤压变形。
+    Box(modifier = Modifier.fillMaxSize()) {
+        CameraPreview(
+            enabled = cameraGranted,
+            sessionId = state.sessionId,
+            frameSink = frameSink,
+            modifier = Modifier.fillMaxSize(),
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(CoachPalette.CameraDim),
+        )
+
         Column(
             modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState()),
+                .fillMaxSize()
+                .padding(horizontal = 16.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.SpaceBetween,
         ) {
-            PhaseStepper(phase = state.phase)
+            AgentTopStatusBar(state = state)
 
-            // 实时摄像头预览（取流由第 4 部分负责，识别由第 3 部分负责）。
-            Spacer(Modifier.height(12.dp))
-            CameraPreview(
-                enabled = cameraGranted,
-                sessionId = state.sessionId,
-                frameSink = frameSink,
+            Column(
                 modifier = Modifier
+                    .weight(1f)
                     .fillMaxWidth()
-                    .height(180.dp)
-                    .clip(RoundedCornerShape(18.dp)),
-            )
-
-            val readiness = readinessSuffix(state)
-            if (readiness.isNotEmpty()) {
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    text = readiness,
-                    color = EmergencyPalette.Warn,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
-                )
-            }
-
-            state.agentStage?.let { stage ->
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    text = "Agent 阶段：$stage",
-                    color = EmergencyPalette.OnSurfaceMuted,
-                    fontSize = 12.sp,
-                )
-            }
-
-            if (state.micListening) {
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    text = "🎤 正在聆听…",
-                    color = EmergencyPalette.Accent,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                )
-            }
-            if (state.partialTranscript.isNotBlank()) {
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = "「${state.partialTranscript}」",
-                    color = EmergencyPalette.OnSurfaceMuted,
-                    fontSize = 13.sp,
-                )
-            }
-
-            Spacer(Modifier.height(14.dp))
-            GuidanceCard(
-                displayText = state.latestGuidance?.messageText.orEmpty(),
-                priority = state.latestGuidance?.priority ?: GuidancePriority.LOW,
-            )
-
-            Spacer(Modifier.height(16.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center,
+                    .verticalScroll(rememberScrollState())
+                    .padding(vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                MetronomeIndicator(
-                    bpm = state.metronomeBpm,
-                    running = state.metronomeRunning,
-                    inRange = state.rateInRange,
+                val readiness = readinessSuffix(state)
+                if (readiness.isNotEmpty()) {
+                    Text(
+                        text = readiness,
+                        color = EmergencyPalette.Warn,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+
+                AgentFlowRail(agentStage = state.agentStage)
+                CoachGuidancePanel(state = state)
+
+                if (state.metronomeRunning) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center,
+                    ) {
+                        MetronomeIndicator(
+                            bpm = state.metronomeBpm,
+                            running = state.metronomeRunning,
+                            inRange = state.rateInRange,
+                        )
+                    }
+                }
+
+                state.primaryButtonLabel?.takeIf { it.isNotBlank() }?.let { label ->
+                    BigButton(
+                        text = label,
+                        container = Color(0xFF16A34A),
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = onPrimaryButton,
+                    )
+                }
+
+                if (showQuickReplies) {
+                    QuickReplyBar(onQuickReply = onQuickReply)
+                }
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                VoiceStatusChip(state = state)
+                CoachBottomBar(
+                    onDialEmergency = onDialEmergency,
+                    onStop = onStop,
                 )
             }
-
-            Spacer(Modifier.height(16.dp))
-            QualityDashboard(
-                qualityScore = state.qualityScore,
-                perception = state.latestPerception,
-                rateInRange = state.rateInRange,
-            )
-
-            state.primaryButtonLabel?.takeIf { it.isNotBlank() }?.let { label ->
-                Spacer(Modifier.height(16.dp))
-                BigButton(
-                    text = label,
-                    container = EmergencyPalette.Primary,
-                    modifier = Modifier.fillMaxWidth(),
-                    onClick = onPrimaryButton,
-                )
-            }
-
-            if (showQuickReplies) {
-                Spacer(Modifier.height(12.dp))
-                QuickReplyBar(onQuickReply = onQuickReply)
-            }
-        }
-
-        // 底部操作区固定贴底：醒目的 120 与结束按钮，高度恒定不抖动。
-        Spacer(Modifier.height(12.dp))
-        Row(modifier = Modifier.fillMaxWidth()) {
-            BigButton(
-                text = "拨打 120",
-                container = EmergencyPalette.Danger,
-                modifier = Modifier.weight(1f),
-                onClick = onDialEmergency,
-            )
-            Spacer(Modifier.width(12.dp))
-            BigButton(
-                text = "结束",
-                container = EmergencyPalette.SurfaceVariant,
-                modifier = Modifier.weight(1f),
-                onClick = onStop,
-            )
         }
     }
 }

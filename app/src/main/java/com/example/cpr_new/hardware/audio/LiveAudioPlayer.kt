@@ -21,7 +21,10 @@ class LiveAudioPlayer {
         releaseTrack()
         activeActionId = actionId
         track = buildTrack(sampleRate)
-        runCatching { track?.play() }
+        runCatching {
+            track?.setVolume(1f)
+            track?.play()
+        }
     }
 
     fun onPcmChunk(bytes: ByteArray) {
@@ -61,7 +64,7 @@ class LiveAudioPlayer {
         return AudioTrack.Builder()
             .setAudioAttributes(
                 AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                     .build(),
             )

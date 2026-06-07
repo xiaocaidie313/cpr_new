@@ -83,6 +83,8 @@ class CprSessionViewModel(
     private var pendingTtsActionId: String? = null
     private var pendingTtsText: String = ""
     private var pendingTtsAudioSrc: String? = null
+    private var liveCaptureStarted: Boolean = false
+    private var micPermissionGranted: Boolean = false
 
     init {
         observeMetronome()
@@ -112,6 +114,7 @@ class CprSessionViewModel(
         startPerception()
         startGuidance()
         startLiveChannel()
+        micPermissionGranted = micGranted
         startLiveCapture(micGranted)
         if (!useRemoteAgent) startMetronome()
         startRecordingSafely()
@@ -140,11 +143,14 @@ class CprSessionViewModel(
         val recording = runCatching { deps.recorder.stop() }.getOrNull()
         if (recording != null) log(LogEntryType.USER_ACTION, "已保存录音：${recording.name}")
 
+        liveCaptureStarted = false
         _state.value = _state.value.copy(
             isActive = false,
             metronomeRunning = false,
-            micListening = false,
+            micState = MicState.Idle,
             partialTranscript = "",
+            lastUserTranscript = null,
+            micLevel = 0f,
         )
         buildHandover()
     }
@@ -195,35 +201,95 @@ class CprSessionViewModel(
     }
 
     private fun startLiveCapture(micGranted: Boolean) {
-        if (!useRemoteAgent || !micGranted || _state.value.micListening) {
-            if (useRemoteAgent && !micGranted) {
-                log(LogEntryType.INCIDENT, "未授予麦克风，语音输入不可用（仍可用快捷回复）")
-            }
+        micPermissionGranted = micGranted
+        if (!useRemoteAgent) return
+        if (!micGranted) {
+            setMicState(MicState.Off)
+            log(LogEntryType.INCIDENT, "未授予麦克风，语音输入不可用（仍可用快捷回复）")
             return
         }
+        if (liveCaptureStarted) return
         val liveAgent = deps.agent as? LiveAgentCapable ?: return
+        if (!liveAgent.isLiveConnected) {
+            setMicState(MicState.Off)
+            return
+        }
+        liveCaptureStarted = true
         deps.liveAudioCapture.start(
             onPcmChunk = { liveAgent.sendPcm(it) },
             onBargeIn = { liveAgent.sendBargeIn() },
-            onError = { raiseIncident("麦克风：$it") },
+            onUtteranceEnd = {
+                setMicState(MicState.Capturing)
+                liveAgent.commitAudio()
+            },
+            onError = { message ->
+                liveCaptureStarted = false
+                setMicState(MicState.Off)
+                raiseIncident("麦克风：$message")
+            },
+            onLevel = { level ->
+                _state.value = _state.value.copy(micLevel = level)
+            },
         )
-        _state.value = _state.value.copy(micListening = true)
+        setMicState(MicState.Listening)
     }
 
-    /** 权限授予后补开 Live 麦克风（首次请求权限异步返回时调用）。 */
-    fun enableLiveCapture() {
-        startLiveCapture(micGranted = true)
+    /** 权限授予或 WS 连上后补开 Live 麦克风。 */
+    fun enableLiveCapture(micGranted: Boolean = micPermissionGranted) {
+        if (micGranted) micPermissionGranted = true
+        startLiveCapture(micGranted = micPermissionGranted)
+    }
+
+    /** 开启 Live 语音采集（底栏「听」）。 */
+    fun startLiveAudio() {
+        startLiveCapture(micGranted = micPermissionGranted)
+    }
+
+    /** 关闭 Live 语音采集（底栏「停」）。 */
+    fun stopLiveAudio() {
+        if (!liveCaptureStarted) return
+        liveCaptureStarted = false
+        deps.liveAudioCapture.stop()
+        setMicState(MicState.Off)
+    }
+
+    /** 文字输入提交（绕过 STT，对齐 first-aid 底栏「输入」）。 */
+    fun submitTextInput(text: String) {
+        if (!_state.value.isActive || text.isBlank()) return
+        viewModelScope.launch {
+            _state.value = _state.value.copy(isAgentInFlight = true)
+            val guidance = runCatching {
+                deps.agent.submitUserTurn(sessionId, text.trim())
+            }.getOrNull()
+            if (guidance != null) {
+                applyGuidance(guidance)
+            } else {
+                _state.value = _state.value.copy(isAgentInFlight = false)
+                raiseIncident("Agent 未响应，请检查网络连接")
+            }
+        }
+    }
+
+    private fun setMicState(micState: MicState) {
+        _state.value = _state.value.copy(micState = micState)
     }
 
     private fun handleLiveEvent(event: LiveAgentEvent) {
         when (event) {
             is LiveAgentEvent.ConnectionChanged -> {
                 _state.value = _state.value.copy(liveWsConnected = event.connected)
-                // WS 断开不应把 HTTP 已成功的 Agent 标成离线
                 if (event.connected) {
                     _state.value = _state.value.copy(agentConnected = true)
-                } else if (event.message != null) {
-                    log(LogEntryType.INCIDENT, "Live 通道：${event.message}")
+                    if (micPermissionGranted && !liveCaptureStarted) {
+                        startLiveCapture(micGranted = true)
+                    } else if (liveCaptureStarted && _state.value.micState != MicState.Speaking) {
+                        setMicState(MicState.Listening)
+                    }
+                } else {
+                    if (liveCaptureStarted) setMicState(MicState.Off)
+                    if (event.message != null) {
+                        log(LogEntryType.INCIDENT, "Live 通道：${event.message}")
+                    }
                 }
             }
             is LiveAgentEvent.Thinking -> Unit
@@ -250,10 +316,15 @@ class CprSessionViewModel(
                 _state.value = _state.value.copy(agentStage = event.currentStage)
             }
             is LiveAgentEvent.PartialTranscript -> {
+                if (event.text.isNotBlank()) setMicState(MicState.Capturing)
                 _state.value = _state.value.copy(partialTranscript = event.text)
             }
             is LiveAgentEvent.FinalTranscript -> {
-                _state.value = _state.value.copy(partialTranscript = "")
+                _state.value = _state.value.copy(
+                    partialTranscript = "",
+                    lastUserTranscript = event.text.takeIf { it.isNotBlank() },
+                )
+                if (liveCaptureStarted) setMicState(MicState.Listening)
                 log(LogEntryType.USER_ACTION, "识别：${event.text}")
             }
             is LiveAgentEvent.AudioBegin -> {
@@ -320,11 +391,13 @@ class CprSessionViewModel(
         when {
             suppress && preferServerTts -> Unit
             preferServerTts && !suppress && action.shouldUseLocalLiveTts() -> {
-                deps.tts.speak(action.ttsText, interrupt = action.priority == GuidancePriority.CRITICAL)
+                speakLocalTts(action)
             }
-            !preferServerTts && !resolvedAudioSrc.isNullOrBlank() -> deps.turnTtsPlayer.play(resolvedAudioSrc)
-            !suppress && action.ttsText.isNotBlank() -> {
-                deps.tts.speak(action.ttsText, interrupt = action.priority == GuidancePriority.CRITICAL)
+            !preferServerTts && !resolvedAudioSrc.isNullOrBlank() -> {
+                deps.turnTtsPlayer.play(resolvedAudioSrc)
+            }
+            action.ttsText.isNotBlank() && (!preferServerTts || !suppress) -> {
+                speakLocalTts(action)
             }
         }
         if (!useRemoteAgent) {
@@ -333,6 +406,10 @@ class CprSessionViewModel(
         applyCopilotTools(action)
 
         val qualityFromAgent = action.metadata["quality_score"]?.toIntOrNull()
+        val statusTags = action.metadata["status_tags"]
+            ?.split("|")
+            ?.filter { it.isNotBlank() }
+            .orEmpty()
         _state.value = _state.value.copy(
             latestGuidance = action,
             phase = action.phase,
@@ -342,6 +419,11 @@ class CprSessionViewModel(
             primaryButtonLabel = action.metadata["primary_button_label"],
             primaryButtonAction = action.metadata["primary_button_action"],
             qualityScore = qualityFromAgent ?: _state.value.qualityScore,
+            secondaryText = action.metadata["secondary_text"].orEmpty(),
+            statusTags = statusTags,
+            visualOverlayMode = action.metadata["visual_overlay_mode"],
+            correctionArrow = action.metadata["correction_arrow"],
+            isAgentInFlight = false,
         )
         log(
             LogEntryType.GUIDANCE,
@@ -404,6 +486,11 @@ class CprSessionViewModel(
     private fun setAgentSpeaking(speaking: Boolean) {
         deps.liveAudioCapture.setTtsSpeaking(speaking)
         deps.audioMetronome.setDucked(speaking)
+        when {
+            speaking -> setMicState(MicState.Speaking)
+            liveCaptureStarted && _state.value.liveWsConnected -> setMicState(MicState.Listening)
+            liveCaptureStarted -> setMicState(MicState.Off)
+        }
     }
 
     private fun shouldDedupeAction(actionId: String): Boolean {
@@ -421,22 +508,27 @@ class CprSessionViewModel(
         val audioSrc = pendingTtsAudioSrc
         when {
             !audioSrc.isNullOrBlank() -> deps.turnTtsPlayer.play(audioSrc)
-            pendingTtsText.isNotBlank() -> {
-                deps.tts.speak(pendingTtsText, interrupt = false)
-            }
+            pendingTtsText.isNotBlank() -> deps.tts.speak(pendingTtsText, interrupt = false)
         }
+    }
+
+    private fun speakLocalTts(action: GuidanceAction) {
+        if (action.ttsText.isBlank()) return
+        deps.tts.speak(action.ttsText, interrupt = action.priority == GuidancePriority.CRITICAL)
     }
 
     /** 模拟语音输入（联调常用短语，走与主按钮相同的 Agent 回合）。 */
     fun onQuickReply(text: String) {
         if (!_state.value.isActive || text.isBlank()) return
         viewModelScope.launch {
+            _state.value = _state.value.copy(isAgentInFlight = true)
             val guidance = runCatching {
                 deps.agent.submitUserTurn(sessionId, text)
             }.getOrNull()
             if (guidance != null) {
                 applyGuidance(guidance)
             } else {
+                _state.value = _state.value.copy(isAgentInFlight = false)
                 raiseIncident("Agent 未响应：$text")
             }
         }
@@ -451,12 +543,14 @@ class CprSessionViewModel(
 
         val userText = CopilotActionMapper.mapButtonTextToUserInput(label, actionCode)
         viewModelScope.launch {
+            _state.value = _state.value.copy(isAgentInFlight = true)
             val guidance = runCatching {
                 deps.agent.submitUserTurn(sessionId, userText)
             }.getOrNull()
             if (guidance != null) {
                 applyGuidance(guidance)
             } else {
+                _state.value = _state.value.copy(isAgentInFlight = false)
                 raiseIncident("Agent 未响应，请检查 Node 服务是否在运行")
             }
         }

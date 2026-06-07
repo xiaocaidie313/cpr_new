@@ -69,6 +69,9 @@ class WebSocketAgentChannel(
 
     fun sendBargeIn() = sendJson(JSONObject().put("type", "barge_in"))
 
+    /** 一句话结束，触发 Node 缓冲 STT / 流式 STT endpoint（mock 环境必需）。 */
+    fun commitAudio() = sendJson(JSONObject().put("type", "commit"))
+
     fun reset() = sendJson(JSONObject().put("type", "reset"))
 
     fun close() {

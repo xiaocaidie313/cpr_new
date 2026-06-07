@@ -70,6 +70,10 @@ class RemoteGuidanceAgent(
         wsChannel.sendBargeIn()
     }
 
+    override fun commitAudio() {
+        wsChannel.commitAudio()
+    }
+
     override suspend fun onSessionStart(sessionId: String): GuidanceAction {
         this.sessionId = sessionId
         connectLive(sessionId)
