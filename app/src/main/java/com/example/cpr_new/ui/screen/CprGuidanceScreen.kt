@@ -39,6 +39,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.cpr_new.core.di.AgentBackend
+import com.example.cpr_new.core.di.ServiceLocator
 import com.example.cpr_new.core.contract.FrameSink
 import com.example.cpr_new.core.contract.GuidancePriority
 import com.example.cpr_new.core.contract.HandoverReport
@@ -464,8 +466,12 @@ private fun HandoverDialog(report: HandoverReport, onDismiss: () -> Unit) {
 
 /** 模型未就绪时的兜底提示，用于“加载慢”场景。 */
 private fun readinessSuffix(state: CprSessionState): String = when {
-    !state.agentConnected -> "Agent 离线 — 请确认已运行 npm run voice:serve"
+    state.incidentBanner != null -> ""
+    !state.agentConnected && state.latestGuidance == null ->
+        "Agent 离线 — 请确认 npm run voice:serve；真机/无线需 adb reverse tcp:8787 tcp:8787"
     !state.agentReady -> "指导引擎加载中…"
+    !state.liveWsConnected && ServiceLocator.agentBackend == AgentBackend.REMOTE_COPILOT ->
+        "Live 语音通道未连接（快捷回复与按钮仍可用）"
     !state.perceptionReady -> "识别启动中…"
     else -> ""
 }

@@ -75,7 +75,11 @@ class RemoteGuidanceAgent(
         connectLive(sessionId)
         ready = transport.health()
         if (!ready) {
-            return offlineFallback(sessionId, "无法连接 Agent 服务，请先运行 npm run voice:serve")
+            return offlineFallback(
+                sessionId,
+                "无法连接 Agent 服务。请确认 npm run voice:serve 已启动；" +
+                    "真机/无线调试请在终端执行 adb reverse tcp:8787 tcp:8787 后重装 App",
+            )
         }
 
         val deviceState = defaultDeviceState()

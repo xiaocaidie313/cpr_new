@@ -41,8 +41,10 @@ data class CprSessionState(
     val primaryButtonLabel: String? = null,
     /** Agent 主按钮动作码（如 mark_unresponsive）。 */
     val primaryButtonAction: String? = null,
-    /** Agent 服务是否在线。 */
+    /** HTTP Agent 是否在线（/api/health、/api/turn）。 */
     val agentConnected: Boolean = false,
+    /** WS /ws/live 是否已连接（语音流式 TTS/STT）。 */
+    val liveWsConnected: Boolean = false,
 
     /** Live 麦克风是否在向 WS 送 PCM。 */
     val micListening: Boolean = false,

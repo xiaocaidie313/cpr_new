@@ -1,7 +1,15 @@
-    plugins {
+import java.util.Properties
+
+plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
 }
+
+// 真机/无线调试 + adb reverse → 127.0.0.1；模拟器 → 在 local.properties 写 copilot.host=10.0.2.2
+val localProperties = Properties().apply {
+    rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use(::load)
+}
+val copilotHost: String = localProperties.getProperty("copilot.host", "127.0.0.1")
 
 android {
     namespace = "com.example.cpr_new"
@@ -20,9 +28,8 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // 模拟器访问宿主机 Node 服务；真机请 adb reverse tcp:8787 tcp:8787 后仍可用 127.0.0.1
-        buildConfigField("String", "COPILOT_BASE_URL", "\"http://10.0.2.2:8787\"")
-        buildConfigField("String", "COPILOT_WS_URL", "\"ws://10.0.2.2:8787/ws/live\"")
+        buildConfigField("String", "COPILOT_BASE_URL", "\"http://$copilotHost:8787\"")
+        buildConfigField("String", "COPILOT_WS_URL", "\"ws://$copilotHost:8787/ws/live\"")
     }
 
     buildTypes {

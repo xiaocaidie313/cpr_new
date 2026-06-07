@@ -218,8 +218,11 @@ class CprSessionViewModel(
     private fun handleLiveEvent(event: LiveAgentEvent) {
         when (event) {
             is LiveAgentEvent.ConnectionChanged -> {
-                _state.value = _state.value.copy(agentConnected = event.connected)
-                if (!event.connected && event.message != null) {
+                _state.value = _state.value.copy(liveWsConnected = event.connected)
+                // WS 断开不应把 HTTP 已成功的 Agent 标成离线
+                if (event.connected) {
+                    _state.value = _state.value.copy(agentConnected = true)
+                } else if (event.message != null) {
                     log(LogEntryType.INCIDENT, "Live 通道：${event.message}")
                 }
             }
