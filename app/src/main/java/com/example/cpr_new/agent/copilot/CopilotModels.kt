@@ -21,6 +21,7 @@ data class CopilotGuidanceAction(
     val visualOverlay: Map<String, Any?>? = null,
     val toolActions: List<CopilotToolAction> = emptyList(),
     val logEvent: Map<String, Any?>? = null,
+    val callBrief: Map<String, Any?>? = null,
 ) {
     val isCritical: Boolean get() = priority == CopilotPriority.CRITICAL
 }
@@ -75,3 +76,27 @@ object CopilotEmergencyTools {
     const val MOCK_CALL = "mock_emergency_call"
     const val REAL_CALL = "emergency_call"
 }
+
+object CopilotSystemTools {
+    const val ATTACH_GPS = "attach_gps_location"
+    const val START_RECORDING = "start_local_recording"
+    const val GENERATE_HANDOVER = "generate_handover_report"
+}
+
+object CopilotShareTools {
+    const val SHARE_VIDEO = "share_video"
+    const val SHARE_REPORT = "share_report"
+    const val SEND_VIDEO = "send_video"
+    const val SEND_REPORT = "send_report"
+    const val DELETE_VIDEO = "delete_video"
+    const val REQUEST_SHARE_VIDEO = "request_share_video"
+    const val REQUEST_SHARE_REPORT = "request_share_report"
+}
+
+val COPILOT_DESTRUCTIVE_TOOLS = setOf(
+    CopilotShareTools.SHARE_VIDEO,
+    CopilotShareTools.SHARE_REPORT,
+    CopilotShareTools.SEND_VIDEO,
+    CopilotShareTools.SEND_REPORT,
+    CopilotShareTools.DELETE_VIDEO,
+)

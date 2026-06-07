@@ -1,6 +1,7 @@
 package com.example.cpr_new.agent.copilot
 
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -23,6 +24,9 @@ class WebSocketAgentChannel(
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
     val events: Flow<LiveAgentEvent> = _events
+
+    private val _connected = AtomicBoolean(false)
+    val isConnected: Boolean get() = _connected.get()
 
     private var socket: WebSocket? = null
     private var sessionId: String = ""
@@ -68,6 +72,7 @@ class WebSocketAgentChannel(
     fun reset() = sendJson(JSONObject().put("type", "reset"))
 
     fun close() {
+        _connected.set(false)
         socket?.close(1000, "client closing")
         socket = null
     }
@@ -95,6 +100,7 @@ class WebSocketAgentChannel(
 
     private inner class Listener : WebSocketListener() {
         override fun onOpen(webSocket: WebSocket, response: Response) {
+            _connected.set(true)
             emit(LiveAgentEvent.ConnectionChanged(connected = true))
             sendStart()
         }
@@ -109,10 +115,12 @@ class WebSocketAgentChannel(
         }
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+            _connected.set(false)
             emit(LiveAgentEvent.ConnectionChanged(connected = false, message = reason.takeIf { it.isNotBlank() }))
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+            _connected.set(false)
             emit(LiveAgentEvent.ConnectionChanged(connected = false, message = t.message))
             emit(LiveAgentEvent.Error(t.message ?: "WebSocket 连接失败"))
         }
@@ -120,6 +128,7 @@ class WebSocketAgentChannel(
 
     private fun handleJson(json: JSONObject) {
         when (json.optString("type")) {
+            "thinking" -> emit(LiveAgentEvent.Thinking(json.intOrNull("turn_seq")))
             "partial" -> emit(LiveAgentEvent.PartialTranscript(json.optString("text", "")))
             "final" -> emit(
                 LiveAgentEvent.FinalTranscript(
@@ -130,12 +139,22 @@ class WebSocketAgentChannel(
             "guidance" -> {
                 val actionJson = json.optJSONObject("action") ?: return
                 val action = runCatching { parseCopilotAction(actionJson) }.getOrNull() ?: return
+                val response = json.optJSONObject("response")
                 emit(
                     LiveAgentEvent.Guidance(
                         action = action,
                         currentStage = json.stringOrNull("current_stage")
-                            ?: json.optJSONObject("response")?.optJSONObject("state")?.stringOrNull("current_stage"),
+                            ?: response?.optJSONObject("state")?.stringOrNull("current_stage"),
                         guidanceSource = json.stringOrNull("source") ?: json.stringOrNull("guidance_source"),
+                        responseType = json.stringOrNull("response_type") ?: json.stringOrNull("responseType"),
+                        turnSeq = json.intOrNull("turn_seq"),
+                        suppressLocalTts = json.booleanOrDefault(false, "suppress_local_tts", "suppressLocalTts"),
+                        openQuestionAnswer = json.optBoolean("open_question_answer", false),
+                        ttsAudioSrc = response?.optJSONObject("tts")
+                            ?.optJSONObject("audio")
+                            ?.let { audio ->
+                                audio.stringOrNull("url") ?: audio.stringOrNull("data_url")
+                            },
                     ),
                 )
             }
@@ -143,12 +162,25 @@ class WebSocketAgentChannel(
             "audio_begin" -> emit(
                 LiveAgentEvent.AudioBegin(
                     actionId = json.stringOrNull("action_id"),
-                    sampleRate = json.intOrDefault(16_000, "sample_rate", "sampleRate"),
+                    sampleRate = json.intOrDefault(DEFAULT_AUDIO_SAMPLE_RATE, "sample_rate", "sampleRate"),
+                    channels = json.intOrDefault(DEFAULT_AUDIO_CHANNELS, "channels"),
+                    bitsPerSample = json.intOrDefault(DEFAULT_AUDIO_BITS_PER_SAMPLE, "bits_per_sample", "bitsPerSample"),
                     flushQueue = json.booleanOrDefault(false, "flush_queue", "flushQueue"),
                 ),
             )
-            "audio_end" -> emit(LiveAgentEvent.AudioEnd(json.stringOrNull("action_id")))
-            "audio_cancel", "audio_unavailable" -> emit(LiveAgentEvent.AudioCancel(json.stringOrNull("reason")))
+            "audio_end" -> emit(
+                LiveAgentEvent.AudioEnd(
+                    actionId = json.stringOrNull("action_id"),
+                    turnSeq = json.intOrNull("turn_seq"),
+                ),
+            )
+            "audio_cancel" -> emit(LiveAgentEvent.AudioCancel(json.stringOrNull("reason")))
+            "audio_unavailable" -> emit(
+                LiveAgentEvent.AudioUnavailable(
+                    reason = json.stringOrNull("reason"),
+                    actionId = json.stringOrNull("action_id"),
+                ),
+            )
             "error" -> emit(
                 LiveAgentEvent.Error(
                     json.optJSONObject("error")?.stringOrNull("message")
@@ -161,6 +193,9 @@ class WebSocketAgentChannel(
     private fun JSONObject.stringOrNull(key: String): String? =
         if (has(key) && !isNull(key)) optString(key).takeIf { it.isNotEmpty() } else null
 
+    private fun JSONObject.intOrNull(key: String): Int? =
+        if (has(key) && !isNull(key)) optInt(key).takeIf { it >= 0 } else null
+
     private fun JSONObject.intOrDefault(default: Int, vararg keys: String): Int =
         keys.firstNotNullOfOrNull { key ->
             if (has(key) && !isNull(key)) optInt(key).takeIf { it > 0 } else null
@@ -172,6 +207,10 @@ class WebSocketAgentChannel(
         } ?: default
 
     companion object {
+        private const val DEFAULT_AUDIO_SAMPLE_RATE = 16_000
+        private const val DEFAULT_AUDIO_CHANNELS = 1
+        private const val DEFAULT_AUDIO_BITS_PER_SAMPLE = 16
+
         private fun defaultClient(): OkHttpClient =
             OkHttpClient.Builder()
                 .connectTimeout(5, TimeUnit.SECONDS)

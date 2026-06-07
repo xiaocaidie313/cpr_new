@@ -39,6 +39,8 @@ class LiveAudioPlayer {
         releaseTrack()
     }
 
+    fun flushQueue() = onAudioCancel()
+
     fun release() = onAudioCancel()
 
     private fun releaseTrack() {

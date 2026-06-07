@@ -7,9 +7,12 @@ import android.speech.tts.UtteranceProgressListener
 import com.example.cpr_new.agent.copilot.CopilotActionMapper
 import com.example.cpr_new.agent.copilot.CopilotEmergencyTools
 import com.example.cpr_new.agent.copilot.CopilotHapticTools
+import com.example.cpr_new.agent.copilot.CopilotSystemTools
 import com.example.cpr_new.agent.copilot.LiveAgentCapable
 import com.example.cpr_new.agent.copilot.LiveAgentEvent
 import com.example.cpr_new.agent.copilot.RemoteGuidanceAgent
+import com.example.cpr_new.agent.copilot.isExpectedAudioCancelReason
+import com.example.cpr_new.agent.copilot.shouldUseLocalLiveTts
 import com.example.cpr_new.core.contract.CprPhase
 import com.example.cpr_new.core.di.AgentBackend
 import com.example.cpr_new.core.di.ServiceLocator
@@ -75,6 +78,12 @@ class CprSessionViewModel(
     private val useRemoteAgent: Boolean =
         ServiceLocator.agentBackend == AgentBackend.REMOTE_COPILOT
 
+    private var lastAppliedActionId: String? = null
+    private var lastAppliedAtMs: Long = 0L
+    private var pendingTtsActionId: String? = null
+    private var pendingTtsText: String = ""
+    private var pendingTtsAudioSrc: String? = null
+
     init {
         observeMetronome()
         setupTtsDucking()
@@ -116,7 +125,11 @@ class CprSessionViewModel(
         log(LogEntryType.LIFECYCLE, "会话结束")
 
         deps.perceptionSource.stop()
-        (deps.agent as? LiveAgentCapable)?.disconnectLive()
+        val liveAgent = deps.agent as? LiveAgentCapable
+        viewModelScope.launch {
+            runCatching { liveAgent?.resetSession(sessionId) }
+        }
+        liveAgent?.disconnectLive()
         metronome.stop()
         deps.audioMetronome.stop()
         deps.liveAudioCapture.release()
@@ -182,7 +195,7 @@ class CprSessionViewModel(
     }
 
     private fun startLiveCapture(micGranted: Boolean) {
-        if (!useRemoteAgent || !micGranted) {
+        if (!useRemoteAgent || !micGranted || _state.value.micListening) {
             if (useRemoteAgent && !micGranted) {
                 log(LogEntryType.INCIDENT, "未授予麦克风，语音输入不可用（仍可用快捷回复）")
             }
@@ -197,6 +210,11 @@ class CprSessionViewModel(
         _state.value = _state.value.copy(micListening = true)
     }
 
+    /** 权限授予后补开 Live 麦克风（首次请求权限异步返回时调用）。 */
+    fun enableLiveCapture() {
+        startLiveCapture(micGranted = true)
+    }
+
     private fun handleLiveEvent(event: LiveAgentEvent) {
         when (event) {
             is LiveAgentEvent.ConnectionChanged -> {
@@ -205,12 +223,24 @@ class CprSessionViewModel(
                     log(LogEntryType.INCIDENT, "Live 通道：${event.message}")
                 }
             }
+            is LiveAgentEvent.Thinking -> Unit
             is LiveAgentEvent.Guidance -> {
                 (deps.agent as? RemoteGuidanceAgent)?.updateStage(
                     event.currentStage ?: event.action.stage,
                 )
-                val local = CopilotActionMapper.toLocalAction(event.action, sessionId)
-                applyGuidance(local, preferServerTts = true)
+                val local = CopilotActionMapper.toLocalAction(
+                    copilot = event.action,
+                    sessionId = sessionId,
+                    ttsAudioSrc = event.ttsAudioSrc,
+                    suppressLocalTts = event.suppressLocalTts,
+                    responseType = event.responseType,
+                )
+                applyGuidance(
+                    local,
+                    preferServerTts = true,
+                    suppressLocalTts = event.suppressLocalTts,
+                    ttsAudioSrc = event.ttsAudioSrc,
+                )
             }
             is LiveAgentEvent.State -> {
                 (deps.agent as? RemoteGuidanceAgent)?.updateStage(event.currentStage)
@@ -239,13 +269,29 @@ class CprSessionViewModel(
             is LiveAgentEvent.AudioCancel -> {
                 deps.liveAudioPlayer.onAudioCancel()
                 setAgentSpeaking(false)
+                val reason = event.reason.orEmpty()
+                if (reason.isNotBlank() && !reason.isExpectedAudioCancelReason()) {
+                    log(LogEntryType.INCIDENT, "音频取消：$reason")
+                }
+            }
+            is LiveAgentEvent.AudioUnavailable -> {
+                deps.liveAudioPlayer.flushQueue()
+                setAgentSpeaking(false)
+                playPendingTtsFallback(event.actionId)
             }
             is LiveAgentEvent.Error -> raiseIncident(event.message)
         }
     }
 
     /** 应用一条 Agent 指导动作：播报 + 触觉 + 节拍变速 + 阶段切换 + 记录。 */
-    private fun applyGuidance(action: GuidanceAction, preferServerTts: Boolean = false) {
+    private fun applyGuidance(
+        action: GuidanceAction,
+        preferServerTts: Boolean = false,
+        suppressLocalTts: Boolean = false,
+        ttsAudioSrc: String? = null,
+    ) {
+        if (shouldDedupeAction(action.actionId)) return
+
         if (action.metadata["offline"] == "true") {
             _state.value = _state.value.copy(
                 agentConnected = false,
@@ -262,11 +308,19 @@ class CprSessionViewModel(
             )
         }
 
-        val ttsAudioSrc = action.metadata["tts_audio_src"]
+        val resolvedAudioSrc = ttsAudioSrc ?: action.metadata["tts_audio_src"]
+        val suppress = suppressLocalTts || action.metadata["suppress_local_tts"] == "true"
+        pendingTtsActionId = action.actionId
+        pendingTtsText = action.ttsText
+        pendingTtsAudioSrc = resolvedAudioSrc
+
         when {
-            preferServerTts -> Unit
-            !ttsAudioSrc.isNullOrBlank() -> deps.turnTtsPlayer.play(ttsAudioSrc)
-            action.ttsText.isNotBlank() -> {
+            suppress && preferServerTts -> Unit
+            preferServerTts && !suppress && action.shouldUseLocalLiveTts() -> {
+                deps.tts.speak(action.ttsText, interrupt = action.priority == GuidancePriority.CRITICAL)
+            }
+            !preferServerTts && !resolvedAudioSrc.isNullOrBlank() -> deps.turnTtsPlayer.play(resolvedAudioSrc)
+            !suppress && action.ttsText.isNotBlank() -> {
                 deps.tts.speak(action.ttsText, interrupt = action.priority == GuidancePriority.CRITICAL)
             }
         }
@@ -312,6 +366,8 @@ class CprSessionViewModel(
                     metronome.stop()
                 }
                 CopilotEmergencyTools.MOCK_CALL, CopilotEmergencyTools.REAL_CALL -> dialEmergency()
+                CopilotSystemTools.ATTACH_GPS -> captureLocation()
+                CopilotSystemTools.START_RECORDING -> startRecordingSafely()
             }
         }
         if (toolTypes.isEmpty() && action.targetRate != null && action.phase == CprPhase.COMPRESSION) {
@@ -345,6 +401,27 @@ class CprSessionViewModel(
     private fun setAgentSpeaking(speaking: Boolean) {
         deps.liveAudioCapture.setTtsSpeaking(speaking)
         deps.audioMetronome.setDucked(speaking)
+    }
+
+    private fun shouldDedupeAction(actionId: String): Boolean {
+        val now = System.currentTimeMillis()
+        if (actionId == lastAppliedActionId && now - lastAppliedAtMs < ACTION_DEDUPE_MS) {
+            return true
+        }
+        lastAppliedActionId = actionId
+        lastAppliedAtMs = now
+        return false
+    }
+
+    private fun playPendingTtsFallback(actionId: String?) {
+        if (actionId != null && pendingTtsActionId != null && actionId != pendingTtsActionId) return
+        val audioSrc = pendingTtsAudioSrc
+        when {
+            !audioSrc.isNullOrBlank() -> deps.turnTtsPlayer.play(audioSrc)
+            pendingTtsText.isNotBlank() -> {
+                deps.tts.speak(pendingTtsText, interrupt = false)
+            }
+        }
     }
 
     /** 模拟语音输入（联调常用短语，走与主按钮相同的 Agent 回合）。 */
@@ -527,6 +604,8 @@ class CprSessionViewModel(
      * UI 侧用 `viewModel(factory = CprSessionViewModel.factory(deps))` 获取实例。
      */
     companion object {
+        private const val ACTION_DEDUPE_MS = 800L
+
         fun factory(deps: CprDependencies): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")

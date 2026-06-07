@@ -23,6 +23,7 @@ fun parseCopilotAction(json: JSONObject): CopilotGuidanceAction =
         visualOverlay = json.optJSONObject("visual_overlay")?.toMap(),
         toolActions = json.optJSONArray("tool_actions").orEmptyJsonObjects().map(::parseToolAction),
         logEvent = json.optJSONObject("log_event")?.toMap(),
+        callBrief = json.optJSONObject("call_brief")?.toMap(),
     )
 
 private fun parseTts(json: JSONObject?): CopilotTtsPayload =

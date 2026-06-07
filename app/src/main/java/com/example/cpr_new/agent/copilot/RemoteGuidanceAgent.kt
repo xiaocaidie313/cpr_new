@@ -36,6 +36,8 @@ class RemoteGuidanceAgent(
 
     override val liveEvents: Flow<LiveAgentEvent> = wsChannel.events
 
+    override val isLiveConnected: Boolean get() = wsChannel.isConnected
+
     override fun connectLive(sessionId: String) {
         this.sessionId = sessionId
         wsChannel.connect(sessionId)
@@ -45,8 +47,19 @@ class RemoteGuidanceAgent(
         wsChannel.close()
     }
 
+    override suspend fun resetSession(sessionId: String) {
+        wsChannel.reset()
+        transport.reset(sessionId)
+        currentStage = null
+        lastPerceptionTurnMs = 0L
+    }
+
     override fun commitText(text: String, intent: String?) {
         wsChannel.commitText(text, intent)
+    }
+
+    override fun sendTurn(request: TurnRequest) {
+        wsChannel.sendTurn(request)
     }
 
     override fun sendPcm(pcm16: ByteArray) {
@@ -88,13 +101,23 @@ class RemoteGuidanceAgent(
         }
     }
 
-    override suspend fun submitUserTurn(sessionId: String, text: String): GuidanceAction? {
+    /**
+     * 按钮/快捷回复走 HTTP；在线语音仅 WS commit_text（guidance 由 WS 推送）。
+     */
+    override suspend fun submitUserTurn(
+        sessionId: String,
+        text: String,
+        viaLiveVoice: Boolean,
+    ): GuidanceAction? {
         this.sessionId = sessionId
-        commitText(text)
+        if (viaLiveVoice && isLiveConnected) {
+            commitText(text)
+            return null
+        }
         val request = TurnRequest(
             sessionId = sessionId,
             text = text,
-            eventSource = "stt",
+            eventSource = "ui",
             eventType = "user_response",
             deviceState = defaultDeviceState(),
         )
@@ -108,8 +131,9 @@ class RemoteGuidanceAgent(
             eventSource = "device",
             deviceState = defaultDeviceState(),
         )
-        val response = postTurn(request)
-        val narrative = response?.messageText?.takeIf { it.isNotBlank() }
+        val guidance = postTurn(request)
+        val narrative = guidance?.messageText?.takeIf { it.isNotBlank() }
+            ?: guidance?.ttsText?.takeIf { it.isNotBlank() }
             ?: "会话 ${log.sessionId.take(8)} 已结束，请结合录音与日志向医护交接。"
 
         return HandoverReport(
@@ -174,7 +198,6 @@ class RemoteGuidanceAgent(
             metadata = mapOf("offline" to "true"),
         )
 
-    /** S7/S8 离线：保留本地节拍，显示继续按压（对齐 first-aid Android 兜底）。 */
     private fun offlineCompressionFallback(sessionId: String, message: String): GuidanceAction =
         GuidanceAction(
             actionId = "offline_cpr_${System.currentTimeMillis()}",

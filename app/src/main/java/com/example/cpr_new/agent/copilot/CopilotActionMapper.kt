@@ -12,11 +12,17 @@ object CopilotActionMapper {
         copilot: CopilotGuidanceAction,
         sessionId: String,
         ttsAudioSrc: String? = null,
+        suppressLocalTts: Boolean = false,
+        responseType: String? = null,
     ): GuidanceAction {
         val primaryButton = copilot.ui.primaryButton
         val primaryLabel = primaryButton?.get("label")?.toString().orEmpty()
         val primaryAction = primaryButton?.get("action")?.toString().orEmpty()
-        val toolTypes = copilot.toolActions.joinToString(",") { it.type }
+        val executableTools = copilot.toolActions.filter { !it.requiresUserConfirmation || it.confirmed }
+        val toolTypes = executableTools.joinToString(",") { it.type }
+        val pendingConfirm = copilot.toolActions
+            .filter { it.requiresUserConfirmation && !it.confirmed }
+            .joinToString(",") { it.type }
         val metronomeBpm = resolveMetronomeBpm(copilot)
 
         return GuidanceAction(
@@ -39,8 +45,11 @@ object CopilotActionMapper {
                 if (primaryLabel.isNotBlank()) put("primary_button_label", primaryLabel)
                 if (primaryAction.isNotBlank()) put("primary_button_action", primaryAction)
                 if (toolTypes.isNotBlank()) put("tool_types", toolTypes)
+                if (pendingConfirm.isNotBlank()) put("pending_confirm_tools", pendingConfirm)
                 copilot.ui.qualityScore?.let { put("quality_score", it.toString()) }
                 ttsAudioSrc?.takeIf { it.isNotBlank() }?.let { put("tts_audio_src", it) }
+                if (suppressLocalTts) put("suppress_local_tts", "true")
+                responseType?.takeIf { it.isNotBlank() }?.let { put("response_type", it) }
             },
         )
     }

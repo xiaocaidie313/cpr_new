@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -56,6 +57,11 @@ private fun CprApp(modifier: Modifier = Modifier) {
 
     val state by viewModel.state.collectAsStateWithLifecycle()
     val permissions = rememberPermissionState(CprPermissions.recommended)
+    val micGranted = permissions.snapshot.isGranted(RECORD_AUDIO)
+
+    LaunchedEffect(micGranted, state.isActive) {
+        if (micGranted && state.isActive) viewModel.enableLiveCapture()
+    }
 
     CprGuidanceScreen(
         state = state,
