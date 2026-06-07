@@ -39,14 +39,17 @@ class DeviceStateProvider(
         ContextCompat.checkSelfPermission(appContext, permission) == PackageManager.PERMISSION_GRANTED
 
     private fun resolveNetworkState(): String {
-        val cm = appContext.getSystemService(ConnectivityManager::class.java) ?: return "unknown"
-        val network = cm.activeNetwork ?: return "offline"
-        val caps = cm.getNetworkCapabilities(network) ?: return "offline"
-        return when {
-            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) -> "online"
-            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) -> "limited"
-            else -> "offline"
-        }
+        if (!hasPermission(Manifest.permission.ACCESS_NETWORK_STATE)) return "unknown"
+        return runCatching {
+            val cm = appContext.getSystemService(ConnectivityManager::class.java) ?: return "unknown"
+            val network = cm.activeNetwork ?: return "offline"
+            val caps = cm.getNetworkCapabilities(network) ?: return "offline"
+            when {
+                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                    caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) -> "online"
+                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) -> "limited"
+                else -> "offline"
+            }
+        }.getOrDefault("unknown")
     }
 }

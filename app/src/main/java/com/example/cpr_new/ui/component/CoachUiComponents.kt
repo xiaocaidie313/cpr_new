@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -57,9 +58,11 @@ import com.example.cpr_new.ui.AttentionMode
 import com.example.cpr_new.ui.CoachLayoutMetrics
 import com.example.cpr_new.ui.CoachPalette
 import com.example.cpr_new.ui.QualityScoreTone
+import com.example.cpr_new.ui.FLOW_STAGE_LABELS
 import com.example.cpr_new.ui.agentStageIndex
 import com.example.cpr_new.ui.compactSecondaryText
 import com.example.cpr_new.ui.connectionChip
+import com.example.cpr_new.ui.sourceBadgeLabel
 import com.example.cpr_new.ui.normalizeOverlayMode
 import com.example.cpr_new.ui.primaryGuidanceText
 import com.example.cpr_new.ui.qualityScorePresentation
@@ -87,6 +90,10 @@ fun AgentTopStatusBar(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             StatusChip(chipLabel, chipColor)
+            StatusChip(
+                text = sourceBadgeLabel(state.perceptionReady, state.latestPerception != null),
+                color = Color(0xFF38BDF8),
+            )
             Text(
                 text = stageStatusLabel(state.agentStage),
                 color = CoachPalette.TextPrimary,
@@ -115,20 +122,24 @@ private fun StatusChip(text: String, color: Color) {
 
 @Composable
 fun AgentFlowRail(agentStage: String?, modifier: Modifier = Modifier) {
+    LabeledFlowRail(agentStage = agentStage, modifier = modifier)
+}
+
+/** 带中文阶段标签的流程轨（对齐产品稿）。 */
+@Composable
+fun LabeledFlowRail(agentStage: String?, modifier: Modifier = Modifier) {
     val currentIndex = agentStageIndex(agentStage)
-    Surface(color = CoachPalette.Rail, shape = RoundedCornerShape(20.dp), modifier = modifier.fillMaxWidth()) {
+    Column(modifier = modifier.fillMaxWidth()) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             (0..9).forEach { index ->
                 Box(
                     modifier = Modifier
                         .weight(1f)
-                        .height(10.dp)
+                        .height(8.dp)
                         .clip(CircleShape)
                         .background(
                             if (index <= currentIndex) CoachPalette.RailActive else CoachPalette.RailInactive,
@@ -136,88 +147,105 @@ fun AgentFlowRail(agentStage: String?, modifier: Modifier = Modifier) {
                 )
             }
         }
+        Spacer(Modifier.height(6.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            FLOW_STAGE_LABELS.forEachIndexed { index, label ->
+                val segmentIndex = index + 1
+                Text(
+                    text = label,
+                    color = if (segmentIndex <= currentIndex) CoachPalette.RailActive else CoachPalette.TextHint,
+                    fontSize = 10.sp,
+                    fontWeight = if (segmentIndex == currentIndex) FontWeight.Bold else FontWeight.Normal,
+                    modifier = Modifier.weight(1f),
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                )
+            }
+        }
     }
 }
 
+/** 顶部指令区：流程轨 + 大字（靠上排列，中间留给相机与节拍脉冲）。 */
 @Composable
-fun CoachAttentionLayout(
+fun CoachInstructionHeader(
     state: CprSessionState,
-    contentPadding: PaddingValues,
-    onPrimaryButton: () -> Unit = {},
-    modifier: Modifier = Modifier,
-) {
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(contentPadding),
-        verticalArrangement = Arrangement.SpaceBetween,
-    ) {
-        AgentFlowRail(agentStage = state.agentStage)
-        GuidanceCard(state = state, large = false, onPrimaryButton = onPrimaryButton)
-    }
-}
-
-@Composable
-fun EyesOffAttentionLayout(
-    state: CprSessionState,
-    contentPadding: PaddingValues,
+    instructionSizeSp: Int,
     modifier: Modifier = Modifier,
 ) {
     val mainText = primaryGuidanceText(
         state.latestGuidance?.messageText.orEmpty(),
         state.agentStage,
     )
+    val showQuality = state.agentStage?.startsWith("S7") == true
+
     Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(contentPadding),
-        verticalArrangement = Arrangement.Center,
+        modifier = modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        LabeledFlowRail(agentStage = state.agentStage)
         Text(
             text = mainText,
             color = CoachPalette.TextPrimary,
-            fontSize = 40.sp,
+            fontSize = instructionSizeSp.sp,
             fontWeight = FontWeight.Black,
             textAlign = TextAlign.Center,
-            lineHeight = 46.sp,
-            maxLines = 2,
+            lineHeight = (instructionSizeSp + 6).sp,
+            maxLines = 3,
             overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 4.dp),
         )
         compactSecondaryText(state.secondaryText, state.statusTags)?.let { secondary ->
-            Spacer(Modifier.height(16.dp))
             Text(
                 text = secondary,
-                color = Color(0xFFE2E8F0),
-                fontSize = 22.sp,
+                color = CoachPalette.TextSecondary,
+                fontSize = 16.sp,
                 textAlign = TextAlign.Center,
-                maxLines = 1,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        QualityScoreDial(
-            score = state.qualityScore,
-            agentStage = state.agentStage,
-            modifier = Modifier.padding(top = 22.dp),
-        )
+        if (showQuality) {
+            CompactQualityChip(score = state.qualityScore, agentStage = state.agentStage)
+        }
+    }
+}
+
+
+@Composable
+fun CoachPrimaryButton(text: String, enabled: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier
+            .fillMaxWidth()
+            .height(56.dp),
+        shape = RoundedCornerShape(18.dp),
+        colors = ButtonDefaults.buttonColors(containerColor = CoachPalette.ActionStart),
+    ) {
+        Text(text, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.Black)
     }
 }
 
 @Composable
-fun GlanceableAttentionLayout(
-    state: CprSessionState,
-    contentPadding: PaddingValues,
-    onPrimaryButton: () -> Unit = {},
-    modifier: Modifier = Modifier,
-) {
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(contentPadding),
-        verticalArrangement = Arrangement.Bottom,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        GuidanceCard(state = state, large = true, onPrimaryButton = onPrimaryButton)
+fun CompactQualityChip(score: Int, agentStage: String?) {
+    val presentation = qualityScorePresentation(score, agentStage) ?: return
+    val color = presentation.tone.toColor()
+    Surface(color = color.copy(alpha = 0.18f), shape = RoundedCornerShape(999.dp)) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("质量", color = CoachPalette.TextMuted, fontSize = 12.sp)
+            Text(presentation.valueText, color = CoachPalette.TextPrimary, fontSize = 20.sp, fontWeight = FontWeight.Black)
+            if (presentation.labelText.isNotBlank()) {
+                Text(presentation.labelText, color = color, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            }
+        }
     }
 }
 
@@ -394,15 +422,6 @@ fun CprCoachOverlay(
             drawCorrectionArrow(center, arrow, modeColor)
         }
 
-        if (attentionMode == AttentionMode.Glanceable) {
-            val bannerTop = size.height * 0.18f
-            drawRoundRect(
-                color = modeColor.copy(alpha = 0.16f),
-                topLeft = Offset(size.width * 0.12f, bannerTop),
-                size = androidx.compose.ui.geometry.Size(size.width * 0.76f, size.height * 0.11f),
-                cornerRadius = CornerRadius(32f, 32f),
-            )
-        }
     }
 }
 
@@ -551,9 +570,9 @@ fun LiveVoiceControls(
                         shape = RoundedCornerShape(16.dp),
                         modifier = Modifier
                             .weight(1f)
-                            .height(CoachLayoutMetrics.VoiceBarCollapsed),
+                            .height(CoachLayoutMetrics.BottomDockVoiceRow),
                     ) {
-                        Text(voice.label, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                        Text(voice.label, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                     }
                     VoiceLevelDot(micState = state.micState, level = state.micLevel)
                     CoachOutlinedButton(
@@ -561,7 +580,7 @@ fun LiveVoiceControls(
                         onClick = { setExpanded(true) },
                         modifier = Modifier
                             .widthIn(min = 64.dp)
-                            .height(CoachLayoutMetrics.VoiceBarCollapsed),
+                            .height(CoachLayoutMetrics.BottomDockVoiceRow),
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -592,7 +611,7 @@ private fun EmergencyBarButton(
 ) {
     Box(
         modifier = modifier
-            .height(CoachLayoutMetrics.VoiceBarEmergencyRow)
+            .height(CoachLayoutMetrics.BottomDockEmergencyRow)
             .clip(RoundedCornerShape(12.dp))
             .background(tint.copy(alpha = 0.28f))
             .clickable(onClick = onClick)
@@ -652,7 +671,7 @@ private fun VoiceLevelDot(micState: MicState, level: Float) {
     }
 }
 
-/** 待命页相机占位 + 脉冲动画，对齐 first-aid MockCameraFallback。 */
+/** 待命页相机占位 + 脉冲动画；宽度随屏自适应，避免小屏纵向挤压。 */
 @Composable
 fun IdleHeroVisual(modifier: Modifier = Modifier) {
     val transition = rememberInfiniteTransition(label = "idle_pulse")
@@ -666,7 +685,9 @@ fun IdleHeroVisual(modifier: Modifier = Modifier) {
 
     Box(
         modifier = modifier
-            .size(width = 220.dp, height = 320.dp)
+            .fillMaxWidth(0.46f)
+            .aspectRatio(11f / 16f)
+            .heightIn(max = 220.dp)
             .clip(RoundedCornerShape(120.dp))
             .background(CoachPalette.CameraFrame),
         contentAlignment = Alignment.Center,

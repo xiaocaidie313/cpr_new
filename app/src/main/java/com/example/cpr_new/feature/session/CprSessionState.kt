@@ -1,6 +1,7 @@
 package com.example.cpr_new.feature.session
 
 import com.example.cpr_new.core.contract.CprPhase
+import com.example.cpr_new.core.contract.GeoSnapshot
 import com.example.cpr_new.core.contract.GuidanceAction
 import com.example.cpr_new.core.contract.HandoverReport
 import com.example.cpr_new.core.contract.HandPosition
@@ -68,6 +69,11 @@ data class CprSessionState(
 
     /** 当前置顶的兜底/告警提示（断网、权限、识别失败等），null 表示无。 */
     val incidentBanner: String? = null,
+
+    /** 最近一次定位快照（拨打 120 / attach_gps 时更新）。 */
+    val latestGeo: GeoSnapshot? = null,
+    /** 是否展示 120 发送确认弹层。 */
+    val showEmergency120Sheet: Boolean = false,
 
     /** 会话结束后的交接报告。 */
     val handoverReport: HandoverReport? = null,

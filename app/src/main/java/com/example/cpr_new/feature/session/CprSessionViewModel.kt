@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import android.speech.tts.UtteranceProgressListener
+import com.example.cpr_new.BuildConfig
 import com.example.cpr_new.agent.copilot.CopilotActionMapper
 import com.example.cpr_new.agent.copilot.CopilotEmergencyTools
 import com.example.cpr_new.agent.copilot.CopilotHapticTools
@@ -272,18 +273,7 @@ class CprSessionViewModel(
     /** 文字输入提交（绕过 STT，对齐 first-aid 底栏「输入」）。 */
     fun submitTextInput(text: String) {
         if (!_state.value.isActive || text.isBlank()) return
-        viewModelScope.launch {
-            _state.value = _state.value.copy(isAgentInFlight = true)
-            val guidance = runCatching {
-                deps.agent.submitUserTurn(sessionId, text.trim())
-            }.getOrNull()
-            if (guidance != null) {
-                applyGuidance(guidance)
-            } else {
-                _state.value = _state.value.copy(isAgentInFlight = false)
-                raiseIncident("Agent 未响应，请检查网络连接")
-            }
-        }
+        viewModelScope.launch { submitAgentTurn(text.trim(), "Agent 未响应，请检查网络连接") }
     }
 
     private fun setMicState(micState: MicState) {
@@ -389,7 +379,8 @@ class CprSessionViewModel(
         if (action.metadata["offline"] == "true") {
             _state.value = _state.value.copy(
                 agentConnected = false,
-                incidentBanner = action.messageText,
+                isAgentInFlight = false,
+                incidentBanner = formatAgentConnectionMessage(action.messageText),
             )
             return
         }
@@ -398,7 +389,10 @@ class CprSessionViewModel(
         if (partialOffline) {
             _state.value = _state.value.copy(
                 agentConnected = false,
-                incidentBanner = action.metadata["offline_detail"] ?: "Agent 离线，继续本地按压",
+                isAgentInFlight = false,
+                incidentBanner = formatAgentConnectionMessage(
+                    action.metadata["offline_detail"] ?: "Agent 离线，继续本地按压",
+                ),
             )
         }
 
@@ -583,39 +577,53 @@ class CprSessionViewModel(
     /** 模拟语音输入（联调常用短语，走与主按钮相同的 Agent 回合）。 */
     fun onQuickReply(text: String) {
         if (!_state.value.isActive || text.isBlank()) return
-        viewModelScope.launch {
-            _state.value = _state.value.copy(isAgentInFlight = true)
-            val guidance = runCatching {
-                deps.agent.submitUserTurn(sessionId, text)
-            }.getOrNull()
-            if (guidance != null) {
-                applyGuidance(guidance)
-            } else {
-                _state.value = _state.value.copy(isAgentInFlight = false)
-                raiseIncident("Agent 未响应：$text")
-            }
-        }
+        viewModelScope.launch { submitAgentTurn(text, "Agent 未响应：$text") }
     }
 
     /** 用户点击 Agent 主按钮（如「没有反应」「开始按压」）。 */
     fun onPrimaryButtonClick() {
         if (!_state.value.isActive) return
+        if (_state.value.isAgentInFlight) {
+            raiseIncident("正在处理上一步，请稍候…")
+            return
+        }
         val label = _state.value.primaryButtonLabel.orEmpty()
         val actionCode = _state.value.primaryButtonAction.orEmpty()
-        if (label.isBlank() && actionCode.isBlank()) return
+        if (label.isBlank() && actionCode.isBlank()) {
+            raiseIncident("当前阶段请使用语音或文字输入")
+            return
+        }
 
         val userText = CopilotActionMapper.mapButtonTextToUserInput(label, actionCode)
         viewModelScope.launch {
-            _state.value = _state.value.copy(isAgentInFlight = true)
-            val guidance = runCatching {
-                deps.agent.submitUserTurn(sessionId, userText)
-            }.getOrNull()
-            if (guidance != null) {
-                applyGuidance(guidance)
-            } else {
-                _state.value = _state.value.copy(isAgentInFlight = false)
-                raiseIncident("Agent 未响应，请检查 Node 服务是否在运行")
-            }
+            submitAgentTurn(userText, "Agent 未响应，请检查 Node 服务是否在运行")
+        }
+    }
+
+    private suspend fun submitAgentTurn(userText: String, emptyResponseMessage: String) {
+        _state.value = _state.value.copy(isAgentInFlight = true)
+        val guidance = runCatching {
+            deps.agent.submitUserTurn(sessionId, userText)
+        }.getOrElse { error ->
+            _state.value = _state.value.copy(isAgentInFlight = false)
+            raiseIncident(formatAgentConnectionMessage(error.message ?: "Agent 请求失败"))
+            return
+        }
+        if (guidance == null) {
+            _state.value = _state.value.copy(isAgentInFlight = false)
+            raiseIncident(formatAgentConnectionMessage(emptyResponseMessage))
+            return
+        }
+        applyGuidance(guidance)
+    }
+
+    private fun formatAgentConnectionMessage(detail: String): String {
+        if (!useRemoteAgent) return detail
+        return buildString {
+            append(detail)
+            append("\n目标：")
+            append(BuildConfig.COPILOT_BASE_URL)
+            append("\n请确认：1) npm run voice:serve 已启动  2) adb devices 有设备  3) adb reverse tcp:8787 tcp:8787")
         }
     }
 
@@ -659,14 +667,25 @@ class CprSessionViewModel(
 
     /** 拨打 120（实际为打开拨号盘预填号码，安全）。 */
     fun dialEmergency() {
-        val ok = deps.dialer.dial()
-        log(LogEntryType.USER_ACTION, if (ok) "已唤起 120 拨号" else "唤起拨号失败")
-        if (ok) {
-            deps.deviceState.emergencyCallStarted = true
-            publishDeviceStateUpdate()
-        } else {
-            raiseIncident("无法唤起拨号，请手动拨打 120")
+        viewModelScope.launch {
+            val geo = runCatching { deps.location.requestSingleFix() }.getOrNull()
+            val ok = deps.dialer.dial()
+            log(LogEntryType.USER_ACTION, if (ok) "已唤起 120 拨号" else "唤起拨号失败")
+            _state.value = _state.value.copy(
+                latestGeo = geo ?: _state.value.latestGeo,
+                showEmergency120Sheet = ok,
+            )
+            if (ok) {
+                deps.deviceState.emergencyCallStarted = true
+                publishDeviceStateUpdate()
+            } else {
+                raiseIncident("无法唤起拨号，请手动拨打 120")
+            }
         }
+    }
+
+    fun dismissEmergency120Sheet() {
+        _state.value = _state.value.copy(showEmergency120Sheet = false)
     }
 
     /** 用户确认/拒绝 Agent 待授权工具（如分享视频）。 */
@@ -722,6 +741,7 @@ class CprSessionViewModel(
         viewModelScope.launch {
             val geo = runCatching { deps.location.requestSingleFix() }.getOrNull()
             if (geo != null) {
+                _state.value = _state.value.copy(latestGeo = geo)
                 log(
                     LogEntryType.USER_ACTION,
                     "已获取定位",

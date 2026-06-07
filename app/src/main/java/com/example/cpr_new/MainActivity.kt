@@ -13,7 +13,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.cpr_new.core.di.AgentBackend
 import com.example.cpr_new.core.di.ServiceLocator
 import com.example.cpr_new.feature.session.CprSessionViewModel
 import com.example.cpr_new.hardware.permission.CprPermissions
@@ -70,8 +69,8 @@ private fun CprApp(modifier: Modifier = Modifier) {
         onDialEmergency = viewModel::dialEmergency,
         onDismissIncident = viewModel::dismissIncident,
         onDismissReport = viewModel::dismissReport,
+        onDismissEmergency120 = viewModel::dismissEmergency120Sheet,
         onPrimaryButton = viewModel::onPrimaryButtonClick,
-        onQuickReply = viewModel::onQuickReply,
         onStartAudio = viewModel::startLiveAudio,
         onStopAudio = viewModel::stopLiveAudio,
         onSubmitText = viewModel::submitTextInput,
@@ -80,7 +79,6 @@ private fun CprApp(modifier: Modifier = Modifier) {
             if (!permissions.snapshot.isGranted(RECORD_AUDIO)) permissions.request()
             viewModel.enableLiveCapture(micGranted = permissions.snapshot.isGranted(RECORD_AUDIO))
         },
-        showQuickReplies = ServiceLocator.agentBackend == AgentBackend.REMOTE_COPILOT,
         hasMicPermission = micGranted,
         modifier = modifier,
         cameraGranted = permissions.snapshot.isGranted(CprPermissions.CAMERA),

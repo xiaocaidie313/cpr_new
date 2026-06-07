@@ -14,6 +14,8 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- 联调 first-aid Node Agent 服务 -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- DeviceStateProvider 上报网络状态；无此权限会 SecurityException 导致 Agent 请求失败 -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!-- 声明硬件为可选，避免无摄像头设备无法安装；运行时再做能力检测兜底 -->
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />

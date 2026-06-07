@@ -34,20 +34,21 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.cpr_new.BuildConfig
 import com.example.cpr_new.core.contract.FrameSink
-import com.example.cpr_new.core.contract.HandoverReport
 import com.example.cpr_new.feature.session.CprSessionState
 import com.example.cpr_new.hardware.camera.CameraPreview
 import com.example.cpr_new.ui.AttentionMode
 import com.example.cpr_new.ui.AttentionModeInputs
+import com.example.cpr_new.ui.CoachLayoutMetrics
 import com.example.cpr_new.ui.CoachPalette
-import com.example.cpr_new.ui.coachContentPadding
+import com.example.cpr_new.ui.coachPrimaryButtonBottomInset
+import com.example.cpr_new.ui.coachTopInset
 import com.example.cpr_new.ui.component.AgentTopStatusBar
-import com.example.cpr_new.ui.component.CoachAttentionLayout
+import com.example.cpr_new.ui.component.CoachInstructionHeader
+import com.example.cpr_new.ui.component.CoachPrimaryButton
 import com.example.cpr_new.ui.component.CprCoachOverlay
-import com.example.cpr_new.ui.component.EyesOffAttentionLayout
-import com.example.cpr_new.ui.component.GlanceableAttentionLayout
+import com.example.cpr_new.ui.component.Emergency120Sheet
+import com.example.cpr_new.ui.component.HandoverReportSheet
 import com.example.cpr_new.ui.component.IdleHeroVisual
 import com.example.cpr_new.ui.component.IdleStartBar
 import com.example.cpr_new.ui.component.LiveVoiceControls
@@ -68,14 +69,13 @@ fun CprGuidanceScreen(
     onDialEmergency: () -> Unit,
     onDismissIncident: () -> Unit,
     onDismissReport: () -> Unit,
+    onDismissEmergency120: () -> Unit = {},
     onPrimaryButton: () -> Unit = {},
-    onQuickReply: (String) -> Unit = {},
     onStartAudio: () -> Unit = {},
     onStopAudio: () -> Unit = {},
     onSubmitText: (String) -> Unit = {},
     onRequestMicPermission: () -> Unit = {},
     onConfirmPendingTool: (Boolean) -> Unit = {},
-    showQuickReplies: Boolean = false,
     hasMicPermission: Boolean = false,
     modifier: Modifier = Modifier,
     cameraGranted: Boolean = false,
@@ -94,12 +94,10 @@ fun CprGuidanceScreen(
                 onStop = onStop,
                 onDialEmergency = onDialEmergency,
                 onPrimaryButton = onPrimaryButton,
-                onQuickReply = onQuickReply,
                 onStartAudio = onStartAudio,
                 onStopAudio = onStopAudio,
                 onSubmitText = onSubmitText,
                 onRequestMicPermission = onRequestMicPermission,
-                showQuickReplies = showQuickReplies,
                 hasMicPermission = hasMicPermission,
                 cameraGranted = cameraGranted,
                 frameSink = frameSink,
@@ -119,7 +117,27 @@ fun CprGuidanceScreen(
         }
 
         state.handoverReport?.let { report ->
-            HandoverDialog(report = report, onDismiss = onDismissReport)
+            HandoverReportSheet(
+                report = report,
+                onDismiss = onDismissReport,
+                onSaveLocal = onDismissReport,
+                onShare = onDismissReport,
+                modifier = Modifier.zIndex(20f),
+            )
+        }
+
+        if (state.showEmergency120Sheet) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(18f),
+                contentAlignment = Alignment.Center,
+            ) {
+                Emergency120Sheet(
+                    location = state.latestGeo,
+                    onDismiss = onDismissEmergency120,
+                )
+            }
         }
 
         if (state.pendingConfirmTool != null) {
@@ -132,7 +150,7 @@ fun CprGuidanceScreen(
     }
 }
 
-/** 待命态：与进行态同一深色视觉语言，底部单条操作栏。 */
+/** 待命态：上方可滚动内容区 + 底部固定操作栏，避免小屏挤压。 */
 @Composable
 private fun IdleContent(
     state: CprSessionState,
@@ -144,58 +162,72 @@ private fun IdleContent(
             .fillMaxSize()
             .statusBarsPadding()
             .navigationBarsPadding()
-            .padding(horizontal = 20.dp, vertical = 16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+            .padding(horizontal = 20.dp),
     ) {
-        Spacer(Modifier.weight(0.6f))
-
-        Box(
+        Column(
             modifier = Modifier
-                .border(2.dp, CoachPalette.CameraBorder, RoundedCornerShape(120.dp))
-                .clip(RoundedCornerShape(120.dp)),
+                .weight(1f)
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
         ) {
-            IdleHeroVisual()
-        }
+            Spacer(Modifier.height(16.dp))
 
-        Spacer(Modifier.height(28.dp))
+            Box(
+                modifier = Modifier
+                    .border(2.dp, CoachPalette.CameraBorder, RoundedCornerShape(120.dp))
+                    .clip(RoundedCornerShape(120.dp)),
+            ) {
+                IdleHeroVisual()
+            }
 
-        Text(
-            text = "FirstAid Copilot",
-            color = CoachPalette.TextPrimary,
-            fontSize = 28.sp,
-            fontWeight = FontWeight.Black,
-        )
-        Text(
-            text = "对准胸部，语音或按钮即可获得实时 CPR 指导",
-            color = CoachPalette.TextSecondary,
-            fontSize = 15.sp,
-            textAlign = TextAlign.Center,
-            lineHeight = 22.sp,
-            modifier = Modifier.padding(top = 10.dp, start = 8.dp, end = 8.dp),
-        )
+            Spacer(Modifier.height(20.dp))
 
-        Spacer(Modifier.height(24.dp))
-        IdleStepsCard()
-
-        if (state.handoverReport != null) {
             Text(
-                text = "上次急救报告已生成",
-                color = CoachPalette.TextMuted,
-                fontSize = 13.sp,
-                modifier = Modifier.padding(top = 16.dp),
+                text = "FirstAid Copilot",
+                color = CoachPalette.TextPrimary,
+                fontSize = 26.sp,
+                fontWeight = FontWeight.Black,
             )
+            Text(
+                text = "对准胸部，语音或按钮即可获得实时 CPR 指导",
+                color = CoachPalette.TextSecondary,
+                fontSize = 14.sp,
+                textAlign = TextAlign.Center,
+                lineHeight = 20.sp,
+                modifier = Modifier.padding(top = 8.dp, start = 4.dp, end = 4.dp),
+            )
+
+            Spacer(Modifier.height(16.dp))
+            IdleStepsCard()
+
+            if (state.handoverReport != null) {
+                Text(
+                    text = "上次急救报告已生成",
+                    color = CoachPalette.TextMuted,
+                    fontSize = 13.sp,
+                    modifier = Modifier.padding(top = 12.dp),
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
         }
 
-        Spacer(Modifier.weight(1f))
-
-        Text(
-            text = "开始后将请求相机、麦克风与定位权限",
-            color = CoachPalette.TextHint,
-            fontSize = 12.sp,
-            modifier = Modifier.padding(bottom = 12.dp),
-        )
-
-        IdleStartBar(onStart = onStart, onDialEmergency = onDialEmergency)
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp, bottom = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = "开始后将请求相机、麦克风与定位权限",
+                color = CoachPalette.TextHint,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(bottom = 10.dp),
+            )
+            IdleStartBar(onStart = onStart, onDialEmergency = onDialEmergency)
+        }
     }
 }
 
@@ -207,8 +239,8 @@ private fun IdleStepsCard() {
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 18.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             IdleStep("1", "确认环境安全，轻拍呼叫患者")
             IdleStep("2", "无反应无呼吸 → 立即拨打 120")
@@ -222,8 +254,8 @@ private fun IdleStep(index: String, text: String) {
     Text(
         text = "$index  $text",
         color = CoachPalette.TextSecondary,
-        fontSize = 14.sp,
-        lineHeight = 20.sp,
+        fontSize = 13.sp,
+        lineHeight = 18.sp,
     )
 }
 
@@ -234,12 +266,10 @@ private fun ActiveContent(
     onStop: () -> Unit,
     onDialEmergency: () -> Unit,
     onPrimaryButton: () -> Unit,
-    onQuickReply: (String) -> Unit,
     onStartAudio: () -> Unit,
     onStopAudio: () -> Unit,
     onSubmitText: (String) -> Unit,
     onRequestMicPermission: () -> Unit,
-    showQuickReplies: Boolean,
     hasMicPermission: Boolean,
     cameraGranted: Boolean,
     frameSink: FrameSink?,
@@ -249,7 +279,14 @@ private fun ActiveContent(
         visualOverlayMode = state.visualOverlayMode,
     ).toAttentionMode()
     var inputExpanded by remember { mutableStateOf(false) }
-    val contentPadding = coachContentPadding(inputExpanded)
+    val hasPrimaryButton = !state.primaryButtonLabel.isNullOrBlank()
+    val topInset = coachTopInset()
+    val horizontalPad = CoachLayoutMetrics.ScreenHorizontal
+    val instructionSizeSp = when (attentionMode) {
+        AttentionMode.EyesOff -> 38
+        AttentionMode.Glanceable -> 30
+        AttentionMode.Coach -> 32
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         CameraPreview(
@@ -266,20 +303,28 @@ private fun ActiveContent(
             modifier = Modifier.fillMaxSize(),
         )
 
-        when (attentionMode) {
-            AttentionMode.Coach -> CoachAttentionLayout(
-                state = state,
-                contentPadding = contentPadding,
-                onPrimaryButton = onPrimaryButton,
-            )
-            AttentionMode.EyesOff -> EyesOffAttentionLayout(
-                state = state,
-                contentPadding = contentPadding,
-            )
-            AttentionMode.Glanceable -> GlanceableAttentionLayout(
-                state = state,
-                contentPadding = contentPadding,
-                onPrimaryButton = onPrimaryButton,
+        CoachInstructionHeader(
+            state = state,
+            instructionSizeSp = instructionSizeSp,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = topInset, start = horizontalPad, end = horizontalPad)
+                .zIndex(2f),
+        )
+
+        if (hasPrimaryButton) {
+            CoachPrimaryButton(
+                text = state.primaryButtonLabel.orEmpty(),
+                enabled = !state.isAgentInFlight,
+                onClick = onPrimaryButton,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(
+                        start = horizontalPad,
+                        end = horizontalPad,
+                        bottom = coachPrimaryButtonBottomInset(inputExpanded),
+                    )
+                    .zIndex(11f),
             )
         }
 
@@ -306,44 +351,8 @@ private fun ActiveContent(
                 .align(Alignment.BottomCenter)
                 .navigationBarsPadding()
                 .padding(horizontal = 16.dp, vertical = 8.dp)
-                .zIndex(10f),
+                .zIndex(12f),
         )
-
-        if (showQuickReplies && BuildConfig.DEBUG) {
-            DebugQuickReplyBar(
-                onQuickReply = onQuickReply,
-                modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .padding(end = 8.dp)
-                    .zIndex(5f),
-            )
-        }
-    }
-}
-
-@Composable
-private fun DebugQuickReplyBar(onQuickReply: (String) -> Unit, modifier: Modifier = Modifier) {
-    val phrases = listOf("现场安全了", "他没有反应", "没有正常呼吸", "开始按压")
-    Surface(
-        color = Color(0xCC0F172A),
-        shape = RoundedCornerShape(16.dp),
-        modifier = modifier,
-    ) {
-        Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            phrases.forEach { phrase ->
-                Text(
-                    text = phrase,
-                    color = Color(0xFF93C5FD),
-                    fontSize = 11.sp,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Color(0xFF1E293B))
-                        .clickable { onQuickReply(phrase) }
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
-                )
-            }
-        }
     }
 }
 
@@ -378,29 +387,3 @@ private fun PendingConfirmDialog(
     )
 }
 
-@Composable
-private fun HandoverDialog(report: HandoverReport, onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = CoachPalette.CameraFrame,
-        titleContentColor = CoachPalette.TextPrimary,
-        textContentColor = CoachPalette.TextSecondary,
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("知道了", color = Color(0xFF93C5FD), fontWeight = FontWeight.Bold)
-            }
-        },
-        title = { Text("交接报告", fontWeight = FontWeight.Black) },
-        text = {
-            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                Text(report.headline, color = CoachPalette.TextPrimary, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(10.dp))
-                report.highlights.forEach { Text("• $it", fontSize = 14.sp) }
-                report.location?.let {
-                    Spacer(Modifier.height(10.dp))
-                    Text("定位：%.5f, %.5f".format(it.latitude, it.longitude), color = Color(0xFF93C5FD))
-                }
-            }
-        },
-    )
-}

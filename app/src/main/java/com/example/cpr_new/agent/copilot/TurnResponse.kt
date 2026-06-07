@@ -21,9 +21,8 @@ data class TurnResponse(
 fun parseTurnResponse(json: JSONObject): TurnResponse {
     val state = json.optJSONObject("state")
     val ttsAudio = json.optJSONObject("tts")?.optJSONObject("audio")
-    val guidanceAction = json.optJSONObject("guidance_action")
-        ?.takeIf { it.has("action_id") }
-        ?.let { runCatching { parseCopilotAction(it) }.getOrNull() }
+    val guidanceAction = parseGuidanceActionField(json.optJSONObject("guidance_action"))
+        ?: parseGuidanceActionField(json.optJSONObject("state_action"))
 
     val ttsText = guidanceAction?.tts?.text?.takeIf { it.isNotBlank() } ?: ""
 
@@ -40,6 +39,11 @@ fun parseTurnResponse(json: JSONObject): TurnResponse {
         error = json.optJSONObject("error")?.stringOrNull("message"),
     )
 }
+
+private fun parseGuidanceActionField(json: JSONObject?): CopilotGuidanceAction? =
+    json
+        ?.takeIf { it.has("action_id") }
+        ?.let { runCatching { parseCopilotAction(it) }.getOrNull() }
 
 private fun JSONObject.stringOrNull(key: String): String? =
     if (has(key) && !isNull(key)) optString(key).takeIf { it.isNotEmpty() } else null

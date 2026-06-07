@@ -20,6 +20,17 @@ fun stageStatusLabel(agentStage: String?): String =
 fun agentStageIndex(agentStage: String?): Int =
     agentStage?.let { Regex("""S(\d+)""").find(it)?.groupValues?.getOrNull(1)?.toIntOrNull() } ?: 0
 
+/** 流程轨下方中文标签（对齐产品稿 9 步）。 */
+val FLOW_STAGE_LABELS = listOf(
+    "安全", "反应", "呼吸", "呼叫", "呼叫", "准备", "按压", "协助", "交接",
+)
+
+fun sourceBadgeLabel(perceptionReady: Boolean, hasPerception: Boolean): String =
+    when {
+        hasPerception && perceptionReady -> "实时识别"
+        else -> "仅录制"
+    }
+
 fun connectionChip(agentConnected: Boolean, liveWsConnected: Boolean): Pair<String, Color> =
     when {
         agentConnected && liveWsConnected -> "在线" to Color(0xFF22C55E)
